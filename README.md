@@ -162,7 +162,7 @@ docker run -d --name 8mblocal -p 8000:8000 -v ./uploads:/app/uploads -v ./output
 
 #### NVIDIA GPU (NVENC)
 ```bash
-docker run -d --name 8mblocal --gpus all --cap-add=SYS_ADMIN --cap-add=VIDEO -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
+docker run -d --name 8mblocal --gpus all --security-opt seccomp=unconfined -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
 ```
 
 #### Intel/AMD GPU (VAAPI - Linux)
@@ -172,7 +172,7 @@ docker run -d --name 8mblocal --device=/dev/dri:/dev/dri -p 8000:8000 -v ./uploa
 
 #### NVIDIA + VAAPI (Dual GPU - Linux)
 ```bash
-docker run -d --name 8mblocal --gpus all --cap-add=SYS_ADMIN --cap-add=VIDEO --device=/dev/dri:/dev/dri -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
+docker run -d --name 8mblocal --gpus all --security-opt seccomp=unconfined --device=/dev/dri:/dev/dri -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
 ```
 
 Access the web UI at: **http://localhost:8000**
@@ -213,9 +213,8 @@ services:
       - ./outputs:/app/outputs
       - ./.env:/app/.env  # Optional: for custom settings
     restart: unless-stopped
-    cap_add:
-      - SYS_ADMIN  # Required for NVENC access
-      - VIDEO
+    security_opt:
+      - seccomp:unconfined  # Required for NVENC access on some systems
     deploy:
       resources:
         reservations:
@@ -388,26 +387,30 @@ docker compose up -d
 #### Hardware Acceleration Issues
 - **NVENC "Operation not permitted" error**: 
   - This means the GPU is detected but NVENC encoder can't be accessed
-  - **Solution**: Add capabilities to your docker run command:
+  - **Solution 1** - Try with security options:
     ```bash
     docker run -d --name 8mblocal \
       --gpus all \
-      --cap-add=SYS_ADMIN \
-      --cap-add=VIDEO \
+      --security-opt seccomp=unconfined \
       -p 8000:8000 \
       -v ./uploads:/app/uploads \
       -v ./outputs:/app/outputs \
       jms1717/8mblocal:latest
     ```
-  - Or in Docker Compose, add:
-    ```yaml
-    cap_add:
-      - SYS_ADMIN
-      - VIDEO
+  - **Solution 2** - If that fails, use privileged mode (less secure):
+    ```bash
+    docker run -d --name 8mblocal \
+      --gpus all \
+      --privileged \
+      -p 8000:8000 \
+      -v ./uploads:/app/uploads \
+      -v ./outputs:/app/outputs \
+      jms1717/8mblocal:latest
     ```
+  - **Root cause**: Usually missing `/dev/nvidia*` device permissions in container
   - Confirm NVIDIA drivers installed on host: `nvidia-smi`
   - Check driver version in container: `docker exec 8mblocal nvidia-smi`
-  - On Linux: Install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+  - On Linux: Verify [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) is installed
   - **If still failing**: System will automatically fallback to CPU encoding
   
 - **Intel QSV not working**: 
