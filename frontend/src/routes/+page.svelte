@@ -7,8 +7,8 @@
   let uploadedFileName: string | null = null; // Track what file was uploaded
   let targetMB = 25;
   let videoCodec: string = 'av1_nvenc';
-  let audioCodec: 'libopus' | 'aac' = 'libopus';
-  let preset: 'p1'|'p2'|'p3'|'p4'|'p5'|'p6'|'p7' = 'p6';
+  let audioCodec: 'libopus' | 'aac' | 'none' = 'libopus';
+  let preset: 'p1'|'p2'|'p3'|'p4'|'p5'|'p6'|'p7'|'extraquality' = 'p6';
   let audioKbps: 64|96|128|160|192|256 = 128;
   let fileSizeLabel: string | null = null;
   let container: 'mp4' | 'mkv' = 'mp4';
@@ -18,11 +18,15 @@
   let maxHeight: number | null = null;
   let startTime: string = '';
   let endTime: string = '';
+  // New UI options
+  let playSoundWhenDone = false;
+  let autoDownload = false;
+  
   $: containerNote = (container === 'mp4' && audioCodec === 'libopus') ? 'MP4 does not support Opus; audio will be encoded as AAC automatically.' : null;
   $: estimated = jobInfo ? {
     duration_s: jobInfo.duration_s,
     total_kbps: jobInfo.duration_s > 0 ? (targetMB * 8192.0) / jobInfo.duration_s : 0,
-    video_kbps: jobInfo.duration_s > 0 ? Math.max(((targetMB * 8192.0) / jobInfo.duration_s) - audioKbps, 0) : 0,
+    video_kbps: jobInfo.duration_s > 0 ? Math.max(((targetMB * 8192.0) / jobInfo.duration_s) - (audioCodec === 'none' ? 0 : audioKbps), 0) : 0,
     final_mb: targetMB
   } : null;
 
@@ -189,7 +193,23 @@
         try { const data = JSON.parse(ev.data);
           if (data.type === 'progress') { progress = data.progress; }
           if (data.type === 'log' && data.message) { logLines = [data.message, ...logLines].slice(0, 500); }
-          if (data.type === 'done') { doneStats = data.stats; progress = 100; }
+          if (data.type === 'done') { 
+            doneStats = data.stats; 
+            progress = 100;
+            
+            // Play sound when done if enabled
+            if (playSoundWhenDone) {
+              const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
+              audio.play().catch(() => {});
+            }
+            
+            // Auto-download if enabled
+            if (autoDownload && doneStats?.output_filename) {
+              setTimeout(() => {
+                window.location.href = downloadUrl(doneStats.output_filename);
+              }, 500);
+            }
+          }
           if (data.type === 'error') { logLines = [data.message, ...logLines]; }
         } catch {}
       }
@@ -264,6 +284,7 @@
           <select class="input w-full" bind:value={audioCodec}>
             <option value="libopus">Opus (Default)</option>
             <option value="aac">AAC</option>
+            <option value="none">🔇 None (Mute)</option>
           </select>
         </div>
         <div>
@@ -273,6 +294,7 @@
             <option value="p5">Balanced (P5)</option>
             <option value="p7">Best Quality (P7)</option>
             <option value="p6">Default (P6)</option>
+            <option value="extraquality">🌟 Extra Quality (Slowest)</option>
           </select>
         </div>
         <div>
@@ -284,7 +306,7 @@
         </div>
         <div>
           <label class="block mb-1 text-sm">Audio Bitrate (kbps)</label>
-          <select class="input w-full" bind:value={audioKbps}>
+          <select class="input w-full" bind:value={audioKbps} disabled={audioCodec === 'none'}>
             <option value={64}>64</option>
             <option value={96}>96</option>
             <option value={128}>128</option>
@@ -292,6 +314,9 @@
             <option value={192}>192</option>
             <option value={256}>256</option>
           </select>
+          {#if audioCodec === 'none'}
+            <p class="text-xs text-gray-400 mt-1">Disabled (audio muted)</p>
+          {/if}
         </div>
         <div>
           <label class="block mb-1 text-sm flex items-center gap-1">
@@ -334,6 +359,21 @@
           Leave resolution blank to keep original. Aspect ratio is maintained.
           Leave times blank to use full duration.
         </p>
+      </div>
+      
+      <!-- UI Options -->
+      <div class="mt-4 pt-4 border-t border-gray-700">
+        <h4 class="text-sm font-medium mb-3">UI Options</h4>
+        <div class="flex flex-wrap gap-4">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" bind:checked={playSoundWhenDone} class="w-4 h-4" />
+            <span class="text-sm">🔔 Play sound when done</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" bind:checked={autoDownload} class="w-4 h-4" />
+            <span class="text-sm">⬇️ Auto-download when done</span>
+          </label>
+        </div>
       </div>
       
       {#if containerNote}

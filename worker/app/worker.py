@@ -167,8 +167,12 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
     tune_val = (tune or "hq").lower()
 
     # Container/audio compatibility: mp4 doesn't support libopus well, fall back to aac
+    # Handle mute option
     chosen_audio_codec = audio_codec
-    if output_path.lower().endswith('.mp4') and audio_codec == 'libopus':
+    if audio_codec == 'none':
+        chosen_audio_codec = None
+        _publish(self.request.id, {"type": "log", "message": "Audio removed (mute option enabled)"})
+    elif output_path.lower().endswith('.mp4') and audio_codec == 'libopus':
         chosen_audio_codec = 'aac'
         _publish(self.request.id, {"type": "log", "message": "mp4 container selected; switching audio codec from libopus to aac"})
 
@@ -179,7 +183,29 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
     preset_flags = []
     tune_flags = []
     
-    if actual_encoder.endswith("_nvenc"):
+    # Handle "extraquality" preset (slowest, best quality)
+    if preset_val == "extraquality":
+        _publish(self.request.id, {"type": "log", "message": "Extra Quality mode enabled (slowest encoding, best quality)"})
+        if actual_encoder.endswith("_nvenc"):
+            preset_flags = ["-preset", "p7"]
+            tune_flags = ["-tune", "hq"]
+            # Add extra quality flags for NVENC
+            preset_flags += ["-rc:v", "vbr", "-cq:v", "19", "-b:v", "0"]  # Variable bitrate with quality target
+        elif actual_encoder.endswith("_qsv"):
+            preset_flags = ["-preset", "veryslow"]
+        elif actual_encoder.endswith("_vaapi"):
+            preset_flags = ["-compression_level", "7", "-quality", "1"]
+        elif actual_encoder in ("libx264", "libx265"):
+            preset_flags = ["-preset", "veryslow"]
+            if actual_encoder == "libx264":
+                tune_flags = ["-tune", "film"]
+                preset_flags += ["-crf", "18"]  # Very high quality
+            else:  # libx265
+                preset_flags += ["-crf", "20"]  # Very high quality for HEVC
+        elif actual_encoder == "libaom-av1":
+            preset_flags = ["-cpu-used", "0"]  # Slowest, best quality
+            preset_flags += ["-crf", "20"]
+    elif actual_encoder.endswith("_nvenc"):
         # NVIDIA NVENC
         preset_flags = ["-preset", preset_val]
         tune_flags = ["-tune", tune_val]
@@ -299,8 +325,15 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
         "-bufsize", f"{bufsize}k",
         *preset_flags,  # Encoder-specific preset
         *tune_flags,    # Encoder-specific tune (if supported)
-        "-c:a", chosen_audio_codec,
-        "-b:a", a_bitrate_str,
+    ]
+    
+    # Add audio encoding or disable audio if muted
+    if chosen_audio_codec is None:
+        cmd += ["-an"]  # No audio
+    else:
+        cmd += ["-c:a", chosen_audio_codec, "-b:a", a_bitrate_str]
+    
+    cmd += [
         *mp4_flags,
         "-progress", "pipe:2",
         output_path,
