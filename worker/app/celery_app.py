@@ -10,7 +10,7 @@ celery_app = Celery(
     "8mblocal",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["app.worker"],  # Ensure task module is imported so tasks register
+    include=["worker.worker"],  # Ensure task module is imported so tasks register
 )
 
 celery_app.conf.update(
