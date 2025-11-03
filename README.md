@@ -4,9 +4,16 @@
 
 ## Screenshots
 
+<details>
+<summary>Screenshots (click to expand)</summary>
+
+<br/>
+
 ![8mb.local – initial screen](docs/images/ui-empty.png)
 
 ![8mb.local – analyze, advanced options, progress, download](docs/images/ui-job-complete.png)
+
+</details>
 
 ## Features
 - Drag‑and‑drop UI with helpful presets and advanced options (codec, container, tune, audio bitrate)
