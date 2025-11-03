@@ -11,6 +11,12 @@
 	container: string;
 	tune: string;
   };
+  type CodecVisibilitySettings = {
+	show_nvidia: boolean;
+	show_intel: boolean;
+	show_amd: boolean;
+	show_cpu: boolean;
+  };
 
   let saving = false;
   let message = '';
@@ -31,11 +37,18 @@
   let container = 'mp4';
   let tune = 'hq';
 
+  // Codec visibility
+  let showNvidia = true;
+  let showIntel = true;
+  let showAmd = true;
+  let showCpu = true;
+
   onMount(async () => {
 	try {
-	  const [authRes, presetsRes] = await Promise.all([
+	  const [authRes, presetsRes, codecsRes] = await Promise.all([
 		fetch('/api/settings/auth'),
-		fetch('/api/settings/presets')
+		fetch('/api/settings/presets'),
+		fetch('/api/settings/codecs')
 	  ]);
 	  if (authRes.ok) {
 		const a: AuthSettings = await authRes.json();
@@ -51,6 +64,13 @@
 		audioKbps = p.audio_kbps;
 		container = p.container;
 		tune = p.tune;
+	  }
+	  if (codecsRes.ok) {
+		const c: CodecVisibilitySettings = await codecsRes.json();
+		showNvidia = c.show_nvidia;
+		showIntel = c.show_intel;
+		showAmd = c.show_amd;
+		showCpu = c.show_cpu;
 	  }
 	} catch (e) {
 	  error = 'Failed to load settings';
@@ -128,6 +148,35 @@
 	  saving = false;
 	}
   }
+
+  async function saveCodecs() {
+	error = '';
+	message = '';
+	saving = true;
+	try {
+	  const res = await fetch('/api/settings/codecs', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+		  show_nvidia: showNvidia,
+		  show_intel: showIntel,
+		  show_amd: showAmd,
+		  show_cpu: showCpu
+		})
+	  });
+	  if (res.ok) {
+		const data = await res.json();
+		message = data.message || 'Saved codec visibility settings';
+	  } else {
+		const data = await res.json();
+		error = data.detail || 'Failed to save codec settings';
+	  }
+	} catch (e) {
+	  error = 'Failed to save codec settings';
+	} finally {
+	  saving = false;
+	}
+  }
 </script>
 
 <style>
@@ -187,6 +236,46 @@
 
 	<div style="margin-top:12px">
 	  <button class="btn" on:click={saveAuth} disabled={saving}>{saving ? 'Saving…' : 'Save authentication'}</button>
+	</div>
+  </div>
+
+  <!-- Codec Visibility -->
+  <div class="card">
+	<div class="title">Codec Visibility</div>
+	<p class="label" style="margin-bottom:12px; color:#9ca3af">
+	  Control which codec groups appear in the compression page dropdown. Only codecs supported by your hardware will be available regardless of these settings.
+	  <a href="/gpu-support" style="color:#3b82f6; text-decoration:underline">View GPU encoding support →</a>
+	</p>
+
+	<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
+	  <div class="switch">
+		<input id="show_nvidia" type="checkbox" bind:checked={showNvidia} />
+		<label class="label" for="show_nvidia" style="margin:0">
+		  <span style="color:#10b981; font-weight:600">NVIDIA</span> (NVENC)
+		</label>
+	  </div>
+	  <div class="switch">
+		<input id="show_intel" type="checkbox" bind:checked={showIntel} />
+		<label class="label" for="show_intel" style="margin:0">
+		  <span style="color:#3b82f6; font-weight:600">Intel</span> (QSV)
+		</label>
+	  </div>
+	  <div class="switch">
+		<input id="show_amd" type="checkbox" bind:checked={showAmd} />
+		<label class="label" for="show_amd" style="margin:0">
+		  <span style="color:#ef4444; font-weight:600">AMD</span> (VCN)
+		</label>
+	  </div>
+	  <div class="switch">
+		<input id="show_cpu" type="checkbox" bind:checked={showCpu} />
+		<label class="label" for="show_cpu" style="margin:0">
+		  <span style="color:#6b7280; font-weight:600">CPU</span> (Software)
+		</label>
+	  </div>
+	</div>
+
+	<div style="margin-top:12px">
+	  <button class="btn" on:click={saveCodecs} disabled={saving}>{saving ? 'Saving…' : 'Save codec settings'}</button>
 	</div>
   </div>
 
