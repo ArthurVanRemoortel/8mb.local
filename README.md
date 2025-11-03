@@ -1,36 +1,62 @@
 # 8mb.local – Self‑Hosted GPU Video Compressor
 
 8mb.local is a self‑hosted, fire‑and‑forget video compressor. Drop a file, choose a target size (e.g., 8MB, 25MB, 50MB, 100MB), and let NVIDIA NVENC produce compact outputs with AV1/HEVC/H.264. The stack includes a SvelteKit UI, FastAPI backend, Celery worker, Redis broker, and real‑time progress via Server‑Sent Events (SSE).
+
 ## Screenshots
 
 ![8mb.local – initial screen](docs/images/ui-empty.png)
 
 ![8mb.local – analyze, advanced options, progress, download](docs/images/ui-job-complete.png)
+
 ## Features
 - Drag‑and‑drop UI with helpful presets and advanced options (codec, container, tune, audio bitrate)
 - ffprobe analysis on upload for instant estimates and warnings
 - Real‑time progress and FFmpeg logs via SSE
+- GPU NVENC encoders: AV1, HEVC (H.265), H.264
+- Output container choice: MP4 or MKV, with compatibility safeguards
+
 ## Architecture (technical deep dive)
 
 ```mermaid
 flowchart LR
-   A[Browser / SvelteKit UI] -- Upload / SSE --> B(FastAPI Backend)
-   B -- Enqueue --> C[Redis]
-   D[Celery Worker + FFmpeg NVENC] -- Progress / Logs --> C
-   B -- Pub/Sub relay --> A
+  A[Browser / SvelteKit UI] -- Upload / SSE --> B(FastAPI Backend)
+  B -- Enqueue --> C[Redis]
+  D[Celery Worker + FFmpeg NVENC] -- Progress / Logs --> C
+  B -- Pub/Sub relay --> A
+  D -- Files --> E[outputs/]
+  A -- Download --> B
+```
+
+Components
+- Frontend (SvelteKit + Vite): drag‑and‑drop UI, size estimates, SSE progress/logs, final download.
+- Backend API (FastAPI): accepts uploads, runs ffprobe, relays SSE, and serves downloads.
+- Worker (Celery + FFmpeg 7.x): executes compression with NVIDIA NVENC; parses `ffmpeg -progress` and publishes updates.
+- Redis (broker + pub/sub): Celery broker and transport for progress/log events.
+
+Data & files
+- `uploads/` – incoming files
+- `outputs/` – compressed results
+- The backend periodically deletes old files after `FILE_RETENTION_HOURS`.
+
 ## Configuration (env)
 - `AUTH_ENABLED` (true|false)
 - `AUTH_USER`, `AUTH_PASS`
 - `FILE_RETENTION_HOURS` (default 1)
 - `REDIS_URL` (defaults to the compose redis service)
 - `PUBLIC_BACKEND_URL` for the frontend (defaults to `http://localhost:8000`)
- 
+
 Example `.env` (copy from `.env.example`):
 
 ```
 AUTH_ENABLED=false
-Components
+AUTH_USER=admin
 AUTH_PASS=changeme
+FILE_RETENTION_HOURS=1
+REDIS_URL=redis://redis-broker:6379/0
+BACKEND_HOST=0.0.0.0
+BACKEND_PORT=8000
+```
+
 ## Using the app
 1. Drag & drop a video or Choose File.
 2. Pick a target size or enter a custom MB value, click Analyze (auto‑analyzes on drop).
@@ -43,7 +69,7 @@ AUTH_PASS=changeme
 4. Click Compress and watch progress/logs. Download when done.
 
 Codec/container notes
-Data & files
+- MP4 + Opus isn’t widely supported. If MP4+Opus is selected, the worker automatically uses AAC to preserve compatibility. MKV supports Opus directly.
 - MP4 outputs include `+faststart` for better web playback.
 - H.264/HEVC outputs are set to a compatible pixel format (yuv420p) and profiles.
 
