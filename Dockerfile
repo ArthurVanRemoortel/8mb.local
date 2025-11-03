@@ -1,6 +1,7 @@
 # Multi-stage unified 8mb.local container
 # Stage 1: Build FFmpeg with multi-vendor GPU support (NVIDIA NVENC, Intel QSV, AMD AMF/VAAPI)
-FROM nvidia/cuda:12.1.0-devel-ubuntu22.04 AS ffmpeg-build
+# Using CUDA 11.8 for compatibility with older NVIDIA drivers (535.x series)
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-build
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
@@ -45,7 +46,8 @@ ENV PUBLIC_BACKEND_URL=""
 RUN npm run build
 
 # Stage 3: Runtime with all services
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+# Using CUDA 11.8 runtime for compatibility with older NVIDIA drivers (535.x series)
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1

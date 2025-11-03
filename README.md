@@ -162,8 +162,9 @@ docker run -d --name 8mblocal -p 8000:8000 -v ./uploads:/app/uploads -v ./output
 
 #### NVIDIA GPU (NVENC)
 ```bash
-docker run -d --name 8mblocal --gpus all --security-opt seccomp=unconfined -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
+docker run -d --name 8mblocal --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
 ```
+> **Note**: The `-e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility` environment variable is **required** to enable NVENC support. It tells the NVIDIA Container Toolkit to mount video encoding libraries into the container.
 
 #### Intel/AMD GPU (VAAPI - Linux)
 ```bash
@@ -172,7 +173,7 @@ docker run -d --name 8mblocal --device=/dev/dri:/dev/dri -p 8000:8000 -v ./uploa
 
 #### NVIDIA + VAAPI (Dual GPU - Linux)
 ```bash
-docker run -d --name 8mblocal --gpus all --security-opt seccomp=unconfined --device=/dev/dri:/dev/dri -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
+docker run -d --name 8mblocal --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility --device=/dev/dri:/dev/dri -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
 ```
 
 Access the web UI at: **http://localhost:8000**
@@ -213,8 +214,8 @@ services:
       - ./outputs:/app/outputs
       - ./.env:/app/.env  # Optional: for custom settings
     restart: unless-stopped
-    security_opt:
-      - seccomp:unconfined  # Required for NVENC access on some systems
+    environment:
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility  # Required for NVENC
     deploy:
       resources:
         reservations:
@@ -385,31 +386,26 @@ docker compose up -d
 ### Troubleshooting
 
 #### Hardware Acceleration Issues
-- **NVENC "Operation not permitted" error**: 
-  - This means the GPU is detected but NVENC encoder can't be accessed
-  - **Solution 1** - Try with security options:
+- **NVENC "Operation not permitted" or "Driver does not support required nvenc API version" error**: 
+  - **Most common cause**: Missing `NVIDIA_DRIVER_CAPABILITIES` environment variable
+  - **Solution**: Add `-e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility` to your docker run command
+  - Example:
     ```bash
     docker run -d --name 8mblocal \
       --gpus all \
-      --security-opt seccomp=unconfined \
+      -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility \
       -p 8000:8000 \
       -v ./uploads:/app/uploads \
       -v ./outputs:/app/outputs \
       jms1717/8mblocal:latest
     ```
-  - **Solution 2** - If that fails, use privileged mode (less secure):
-    ```bash
-    docker run -d --name 8mblocal \
-      --gpus all \
-      --privileged \
-      -p 8000:8000 \
-      -v ./uploads:/app/uploads \
-      -v ./outputs:/app/outputs \
-      jms1717/8mblocal:latest
-    ```
-  - **Root cause**: Usually missing `/dev/nvidia*` device permissions in container
+  - This tells the NVIDIA Container Toolkit to mount NVENC libraries into the container
+  - **Driver version issue**: If you see "Required: 13.0 Found: 12.1", your NVIDIA driver is too old
+    - Container requires driver 550+ for full NVENC API 13.0 support
+    - Check your driver: `nvidia-smi`
+    - Debian 12 stable ships with driver 535 (NVENC API 12.1) which uses CUDA 11.8 build
   - Confirm NVIDIA drivers installed on host: `nvidia-smi`
-  - Check driver version in container: `docker exec 8mblocal nvidia-smi`
+  - Verify library is accessible: `docker exec 8mblocal ls -la /usr/lib/x86_64-linux-gnu/libnvidia-encode.so*`
   - On Linux: Verify [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) is installed
   - **If still failing**: System will automatically fallback to CPU encoding
   
