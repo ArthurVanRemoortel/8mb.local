@@ -118,17 +118,6 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
             return False
     
     # Fallback to CPU if hardware encoder not available or can't initialize
-    # Skip initialization test for NVENC if NVIDIA toolkit is installed (check for nvidia-smi)
-    skip_test = False
-    if actual_encoder.endswith("_nvenc"):
-        try:
-            nvidia_check = subprocess.run(["nvidia-smi"], capture_output=True, timeout=2)
-            if nvidia_check.returncode == 0:
-                skip_test = True
-                _publish(self.request.id, {"type": "log", "message": "NVIDIA GPU detected via nvidia-smi, skipping encoder test"})
-        except Exception:
-            pass
-    
     if actual_encoder not in ("libx264", "libx265", "libaom-av1"):
         if not is_encoder_available(actual_encoder):
             _publish(self.request.id, {"type": "log", "message": f"Warning: {actual_encoder} not available, falling back to CPU"})
@@ -144,7 +133,7 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
                 actual_encoder = "libaom-av1"
                 v_flags = ["-pix_fmt", "yuv420p"]
             init_hw_flags = []
-        elif not skip_test and not test_encoder_init(actual_encoder, init_hw_flags):
+        elif not test_encoder_init(actual_encoder, init_hw_flags):
             _publish(self.request.id, {"type": "log", "message": f"Warning: {actual_encoder} failed initialization test (driver/library issue), falling back to CPU"})
             
             # Determine CPU fallback based on codec type
