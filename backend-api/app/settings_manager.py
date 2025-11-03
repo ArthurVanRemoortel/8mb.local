@@ -67,6 +67,7 @@ def update_auth_settings(auth_enabled: bool, auth_user: Optional[str] = None, au
     env_vars.setdefault('REDIS_URL', 'redis://127.0.0.1:6379/0')
     env_vars.setdefault('BACKEND_HOST', '0.0.0.0')
     env_vars.setdefault('BACKEND_PORT', '8000')
+    env_vars.setdefault('HISTORY_ENABLED', 'false')
     
     write_env_file(env_vars)
     
@@ -205,3 +206,18 @@ def update_codec_visibility_settings(settings: dict):
             os.environ[env_key] = value
     
     write_env_file(env_vars)
+
+
+def get_history_enabled() -> bool:
+    """Get history enabled setting"""
+    env_vars = read_env_file()
+    history_enabled = os.getenv('HISTORY_ENABLED', env_vars.get('HISTORY_ENABLED', 'false'))
+    return history_enabled.lower() in ('true', '1', 'yes')
+
+
+def update_history_enabled(enabled: bool):
+    """Update history enabled setting in .env file"""
+    env_vars = read_env_file()
+    env_vars['HISTORY_ENABLED'] = 'true' if enabled else 'false'
+    write_env_file(env_vars)
+    os.environ['HISTORY_ENABLED'] = 'true' if enabled else 'false'

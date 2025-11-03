@@ -4,6 +4,7 @@ import os
 import shlex
 import subprocess
 import time
+from pathlib import Path
 from typing import Dict
 from redis import Redis
 
@@ -384,13 +385,51 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
         final_size = os.path.getsize(output_path)
     except Exception:
         final_size = 0
+    
+    final_size_mb = round(final_size / (1024*1024), 2) if final_size else 0
+    
     stats = {
         "input_path": input_path,
         "output_path": output_path,
         "duration_s": duration,
         "target_size_mb": target_size_mb,
-        "final_size_mb": round(final_size / (1024*1024), 2) if final_size else 0,
+        "final_size_mb": final_size_mb,
     }
+    
+    # Add to history if enabled
+    try:
+        history_enabled = os.getenv('HISTORY_ENABLED', 'false').lower() in ('true', '1', 'yes')
+        if history_enabled:
+            # Import here to avoid circular dependency
+            import sys
+            sys.path.insert(0, '/app')
+            from backend.history_manager import add_history_entry
+            
+            # Get original file size
+            original_size = os.path.getsize(input_path)
+            original_size_mb = original_size / (1024*1024)
+            
+            # Extract filename from path
+            filename = Path(input_path).name
+            
+            # Get compression duration (time taken)
+            compression_duration = time.time() - self.request.started if hasattr(self.request, 'started') else 0
+            
+            add_history_entry(
+                filename=filename,
+                original_size_mb=original_size_mb,
+                compressed_size_mb=final_size_mb,
+                video_codec=actual_encoder,
+                audio_codec=chosen_audio_codec or 'none',
+                target_mb=target_size_mb,
+                preset=preset_val,
+                duration=compression_duration,
+                task_id=self.request.id
+            )
+    except Exception as e:
+        # Don't fail the job if history fails
+        _publish(self.request.id, {"type": "log", "message": f"Failed to save history: {str(e)}"})
+    
     self.update_state(state="SUCCESS", meta={"output_path": output_path, "progress": 100.0, "detail": "done", **stats})
     _publish(self.request.id, {"type": "done", "stats": stats})
     return stats

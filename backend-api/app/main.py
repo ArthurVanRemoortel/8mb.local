@@ -20,6 +20,7 @@ from .celery_app import celery_app
 from .models import UploadResponse, CompressRequest, StatusResponse, AuthSettings, AuthSettingsUpdate, PasswordChange, DefaultPresets, AvailableCodecsResponse, CodecVisibilitySettings
 from .cleanup import start_scheduler
 from . import settings_manager
+from . import history_manager
 
 UPLOADS_DIR = Path("/app/uploads")
 OUTPUTS_DIR = Path("/app/outputs")
@@ -338,6 +339,54 @@ async def update_codec_visibility_settings(
         return {"status": "success", "message": "Codec visibility settings updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# History endpoints
+@app.get("/api/settings/history")
+async def get_history_settings():
+    """Get history enabled setting (no auth required)"""
+    return {"enabled": settings_manager.get_history_enabled()}
+
+
+@app.put("/api/settings/history")
+async def update_history_settings(
+    data: dict,
+    _auth=Depends(basic_auth)
+):
+    """Update history enabled setting"""
+    try:
+        enabled = data.get("enabled", False)
+        settings_manager.update_history_enabled(enabled)
+        return {"status": "success", "enabled": enabled}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/history")
+async def get_history(limit: int = 50, _auth=Depends(basic_auth)):
+    """Get compression history"""
+    if not settings_manager.get_history_enabled():
+        return {"entries": [], "enabled": False}
+    
+    entries = history_manager.get_history(limit=limit)
+    return {"entries": entries, "enabled": True}
+
+
+@app.delete("/api/history")
+async def clear_history(_auth=Depends(basic_auth)):
+    """Clear all history"""
+    history_manager.clear_history()
+    return {"status": "success", "message": "History cleared"}
+
+
+@app.delete("/api/history/{task_id}")
+async def delete_history_entry(task_id: str, _auth=Depends(basic_auth)):
+    """Delete a specific history entry"""
+    success = history_manager.delete_history_entry(task_id)
+    if success:
+        return {"status": "success"}
+    else:
+        raise HTTPException(status_code=404, detail="History entry not found")
 
 
 # Initialize .env file on startup if it doesn't exist
