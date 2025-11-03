@@ -250,9 +250,8 @@ def map_codec_to_hw(requested_codec: str, hw_info: Dict) -> tuple[str, list, lis
     Returns: (encoder_name, extra_flags, init_hw_flags)
     init_hw_flags are used before -i for hardware decode/upload setup
     """
-    # If user explicitly requested a CPU encoder, honor it even if HW is available
+    # If user explicitly requested a CPU encoder, honor it
     if requested_codec in ("libx264", "libx265", "libsvtav1", "libaom-av1"):
-        # Map libsvtav1 to libaom-av1 unless explicitly supported
         encoder = requested_codec if requested_codec != "libsvtav1" else "libaom-av1"
         flags: list[str] = []
         init_flags: list[str] = []
@@ -260,10 +259,40 @@ def map_codec_to_hw(requested_codec: str, hw_info: Dict) -> tuple[str, list, lis
             flags = ["-pix_fmt", "yuv420p", "-profile:v", "high"]
         elif encoder == "libx265":
             flags = ["-pix_fmt", "yuv420p"]
-        # libaom-av1 generally picks sane defaults; keep flags minimal
         return encoder, flags, init_flags
 
-    # Extract base codec name
+    # If user explicitly requested a specific hardware encoder, honor it
+    # (e.g., h264_nvenc, hevc_amf, av1_vaapi, etc.)
+    if requested_codec in ("h264_nvenc", "hevc_nvenc", "av1_nvenc",
+                           "h264_qsv", "hevc_qsv", "av1_qsv",
+                           "h264_vaapi", "hevc_vaapi", "av1_vaapi",
+                           "h264_amf", "hevc_amf", "av1_amf"):
+        encoder = requested_codec
+        flags = []
+        init_flags = []
+        
+        # Add hardware-specific flags based on encoder type
+        if encoder.endswith("_nvenc"):
+            flags = ["-pix_fmt", "yuv420p"]
+            if "h264" in encoder:
+                flags += ["-profile:v", "high"]
+            elif "hevc" in encoder:
+                flags += ["-profile:v", "main"]
+        elif encoder.endswith("_qsv"):
+            init_flags = ["-init_hw_device", "qsv=hw", "-hwaccel", "qsv", "-hwaccel_output_format", "qsv"]
+            flags = ["-pix_fmt", "nv12"]
+            if "h264" in encoder:
+                flags += ["-profile:v", "high"]
+        elif encoder.endswith("_amf"):
+            flags = ["-pix_fmt", "yuv420p"]
+        elif encoder.endswith("_vaapi"):
+            vaapi_device = hw_info.get("vaapi_device", "/dev/dri/renderD128")
+            init_flags = ["-init_hw_device", f"vaapi=va:{vaapi_device}", "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi", "-hwaccel_device", "va"]
+            flags = ["-vf", "format=nv12|vaapi,hwupload"]
+        
+        return encoder, flags, init_flags
+
+    # Legacy fallback: extract base codec and use hardware detection
     if "h264" in requested_codec:
         base = "h264"
     elif "hevc" in requested_codec or "h265" in requested_codec:
@@ -271,7 +300,7 @@ def map_codec_to_hw(requested_codec: str, hw_info: Dict) -> tuple[str, list, lis
     elif "av1" in requested_codec:
         base = "av1"
     else:
-        base = "h264"  # default
+        base = "h264"
     
     encoder = hw_info["available_encoders"].get(base, "libx264")
     flags = []
@@ -285,7 +314,6 @@ def map_codec_to_hw(requested_codec: str, hw_info: Dict) -> tuple[str, list, lis
         elif base == "hevc":
             flags += ["-profile:v", "main"]
     elif encoder.endswith("_qsv"):
-        # QSV requires init_hw_upload to qsv context
         init_flags = ["-init_hw_device", "qsv=hw", "-hwaccel", "qsv", "-hwaccel_output_format", "qsv"]
         flags = ["-pix_fmt", "nv12"]
         if base == "h264":
@@ -293,7 +321,6 @@ def map_codec_to_hw(requested_codec: str, hw_info: Dict) -> tuple[str, list, lis
     elif encoder.endswith("_amf"):
         flags = ["-pix_fmt", "yuv420p"]
     elif encoder.endswith("_vaapi"):
-        # VAAPI requires device initialization
         vaapi_device = hw_info.get("vaapi_device", "/dev/dri/renderD128")
         init_flags = ["-init_hw_device", f"vaapi=va:{vaapi_device}", "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi", "-hwaccel_device", "va"]
         flags = ["-vf", "format=nv12|vaapi,hwupload"]
