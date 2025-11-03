@@ -105,7 +105,7 @@ async def compress(req: CompressRequest):
     output_name = input_path.stem + "_8mb" + ext
     output_path = OUTPUTS_DIR / output_name
     task = celery_app.send_task(
-        "app.worker.compress_video",
+        "worker.worker.compress_video",
         kwargs=dict(
             job_id=req.job_id,
             input_path=str(input_path),
@@ -177,7 +177,7 @@ async def get_hardware_info():
         # Query worker for hardware capabilities
         # This is a lightweight check via a Celery task
         from .celery_app import celery_app
-        result = celery_app.send_task("app.worker.get_hardware_info")
+        result = celery_app.send_task("worker.worker.get_hardware_info")
         hw_info = result.get(timeout=5)
         return hw_info
     except Exception as e:

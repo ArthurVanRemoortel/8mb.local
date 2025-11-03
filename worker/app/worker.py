@@ -16,7 +16,7 @@ REDIS = None
 def _redis() -> Redis:
     global REDIS
     if REDIS is None:
-        REDIS = Redis.from_url(os.getenv("REDIS_URL", "redis://redis-broker:6379/0"), decode_responses=True)
+        REDIS = Redis.from_url(os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"), decode_responses=True)
     return REDIS
 
 

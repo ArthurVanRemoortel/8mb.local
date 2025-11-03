@@ -53,10 +53,22 @@ Data & files
 - `AUTH_ENABLED` (true|false)
 - `AUTH_USER`, `AUTH_PASS`
 - `FILE_RETENTION_HOURS` (default 1)
-- `REDIS_URL` (defaults to the compose redis service)
+- `REDIS_URL` (single container: `redis://127.0.0.1:6379/0`, multi-container: `redis://redis-broker:6379/0`)
 - `PUBLIC_BACKEND_URL` for the frontend (defaults to `http://localhost:8000`)
 
-Example `.env` (copy from `.env.example`):
+Example `.env` for single container (default):
+
+```
+AUTH_ENABLED=false
+AUTH_USER=admin
+AUTH_PASS=changeme
+FILE_RETENTION_HOURS=1
+REDIS_URL=redis://127.0.0.1:6379/0
+BACKEND_HOST=0.0.0.0
+BACKEND_PORT=8000
+```
+
+Example `.env` for multi-container:
 
 ```
 AUTH_ENABLED=false
