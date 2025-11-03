@@ -25,7 +25,11 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-7.0.tar.xz && \
       --enable-libx264 --enable-libx265 --enable-libvpx --enable-libopus \
       --extra-cflags=-I/usr/local/cuda/include \
       --extra-ldflags=-L/usr/local/cuda/lib64 && \
-    make -j$(nproc) && make install && ldconfig
+    make -j$(nproc) && make install && ldconfig && \
+    # Strip binaries to reduce size
+    strip /usr/local/bin/ffmpeg /usr/local/bin/ffprobe && \
+    # Clean up build artifacts
+    cd .. && rm -rf ffmpeg-7.0 ffmpeg-7.0.tar.xz nv-codec-headers
 
 # Stage 2: Build Frontend
 FROM node:20-alpine AS frontend-build
@@ -51,10 +55,17 @@ RUN apt-get update && apt-get install -y \
     libva2 libva-drm2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy FFmpeg from build stage
+# Copy FFmpeg from build stage (only what we need)
 COPY --from=ffmpeg-build /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-build /usr/local/bin/ffprobe /usr/local/bin/ffprobe
-COPY --from=ffmpeg-build /usr/local/lib /usr/local/lib
+# Copy only FFmpeg libraries (not entire /usr/local/lib)
+COPY --from=ffmpeg-build /usr/local/lib/libavcodec.so* /usr/local/lib/
+COPY --from=ffmpeg-build /usr/local/lib/libavformat.so* /usr/local/lib/
+COPY --from=ffmpeg-build /usr/local/lib/libavutil.so* /usr/local/lib/
+COPY --from=ffmpeg-build /usr/local/lib/libavfilter.so* /usr/local/lib/
+COPY --from=ffmpeg-build /usr/local/lib/libswscale.so* /usr/local/lib/
+COPY --from=ffmpeg-build /usr/local/lib/libswresample.so* /usr/local/lib/
+COPY --from=ffmpeg-build /usr/local/lib/libavdevice.so* /usr/local/lib/
 RUN ldconfig
 
 WORKDIR /app
@@ -62,7 +73,8 @@ WORKDIR /app
 # Install Python dependencies (backend + worker combined)
 COPY backend-api/requirements.txt /app/backend-requirements.txt
 COPY worker/requirements.txt /app/worker-requirements.txt
-RUN pip3 install --no-cache-dir -r /app/backend-requirements.txt -r /app/worker-requirements.txt
+RUN pip3 install --no-cache-dir -r /app/backend-requirements.txt -r /app/worker-requirements.txt && \
+    rm -rf ~/.cache/pip /root/.cache/pip /tmp/*
 
 # Copy application code
 COPY backend-api/app /app/backend

@@ -1,6 +1,6 @@
 services:
   app:
-    image: jms1717/8mblocal:latest
+    image: jms1717/8mblocal:single-container
     container_name: 8mblocal-app
     ports:
       - "8000:8000"
