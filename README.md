@@ -117,8 +117,30 @@ The system will automatically select the best available encoder at runtime. You'
 ## Installation
 Run with prebuilt images (recommended) or build locally.
 
-### Quick Start (Docker Hub images)
-If you just want to run the stack without building images locally:
+### Option 1: Single Container (Simplest - Recommended)
+Run everything in ONE container with embedded Redis:
+
+```bash
+docker run -d \
+  -p 8000:8000 \
+  -v ./uploads:/app/uploads \
+  -v ./outputs:/app/outputs \
+  --gpus all \
+  --name 8mblocal \
+  jms1717/8mblocal:single-container
+```
+
+Or with docker-compose:
+```bash
+docker compose -f docker-compose.hub-unified.yml up -d
+```
+
+Access at: http://localhost:8000
+
+**What's included**: Redis + Backend + Worker + Frontend in a single container managed by supervisord.
+
+### Option 2: Multi-Container (Original)
+Run with separate containers for each service:
 
 ```bash
 docker compose -f docker-compose.hub.yml up -d
@@ -129,6 +151,13 @@ Frontend: http://localhost:5173  •  Backend: http://localhost:8000
 **Note**: GPU acceleration is optional. The system auto-detects available hardware (NVIDIA/Intel/AMD/CPU) and adapts accordingly.
 
 ### Build locally
+#### Single container:
+```bash
+docker compose -f docker-compose.unified.yml build
+docker compose -f docker-compose.unified.yml up -d
+```
+
+#### Multi-container:
 1. Copy `.env.example` to `.env` and adjust values.
 2. Ensure folders: `uploads/`, `outputs/` (mounted into containers).
 3. Start services (first run: worker compiles FFmpeg, takes longer):
@@ -139,6 +168,13 @@ docker compose up --build -d
 
 ### Update to latest images
 
+**Single container:**
+```bash
+docker pull jms1717/8mblocal:single-container
+docker compose -f docker-compose.hub-unified.yml up -d
+```
+
+**Multi-container:**
 ```bash
 docker compose -f docker-compose.hub.yml pull
 docker compose -f docker-compose.hub.yml up -d
