@@ -1,7 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
-  import { upload, startCompress, openProgressStream, downloadUrl } from '$lib/api';
+  import { uploadWithProgress, startCompress, openProgressStream, downloadUrl } from '$lib/api';
 
   let file: File | null = null;
   let targetMB = 25;
@@ -33,6 +33,7 @@
   let warnText: string | null = null;
   let errorText: string | null = null;
   let isUploading = false;
+  let uploadProgress = 0;
   // Support widget state
   let showSupport = false;
   function toggleSupport(){ showSupport = !showSupport; }
@@ -88,10 +89,11 @@
     if (!file) return;
     if (isUploading) return;
     isUploading = true;
+    uploadProgress = 0;
     errorText = null;
     try {
       console.log('Uploading to backend...', file.name);
-      jobInfo = await upload(file, targetMB, audioKbps);
+      jobInfo = await uploadWithProgress(file, targetMB, audioKbps, { onProgress: (p:number)=>{ uploadProgress = p; } });
       console.log('Upload response:', jobInfo);
       warnText = jobInfo.warn_low_quality ? `Warning: Very low video bitrate (${Math.round(jobInfo.estimate_video_kbps)} kbps)` : null;
     } catch (err: any) {
@@ -158,6 +160,14 @@
       <input type="file" accept="video/*" on:change={async (e:any)=>{ const f=e.target.files?.[0]||null; file=f; fileSizeLabel = f? formatSize(f.size): null; if (f) { await doUpload(); } }} />
       {#if file}
         <p class="mt-2 text-sm text-gray-400">{file.name} {#if fileSizeLabel}<span class="opacity-70">• {fileSizeLabel}</span>{/if}</p>
+      {/if}
+      {#if isUploading}
+        <div class="mt-4">
+          <p class="text-xs text-gray-400 mb-1">Uploading… {uploadProgress}%</p>
+          <div class="h-2 bg-gray-800 rounded">
+            <div class="h-2 bg-blue-600 rounded" style={`width:${uploadProgress}%`}></div>
+          </div>
+        </div>
       {/if}
     </div>
   </div>
@@ -294,7 +304,7 @@
 
   <div class="flex gap-2">
     <button class="btn" on:click={doUpload} disabled={!file || isUploading}>
-      {isUploading ? 'Analyzing...' : 'Analyze'}
+      {isUploading ? `Uploading… ${uploadProgress}%` : 'Analyze'}
     </button>
     <button class="btn" on:click={doCompress} disabled={!jobInfo}>Compress</button>
     <button class="btn" on:click={reset} disabled={!file && !taskId}>Reset</button>
