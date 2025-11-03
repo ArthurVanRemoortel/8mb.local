@@ -80,63 +80,37 @@
 
   function buildCodecList(codecData: any): Array<{value: string, label: string, group: string}> {
     const list: Array<{value: string, label: string, group: string}> = [];
-    const enabledGroups = codecData.enabled_groups || [];
+    const enabledCodecs = codecData.enabled_codecs || [];
     
-    // NVIDIA codecs
-    if (enabledGroups.includes('nvidia')) {
-      list.push(
-        { value: 'av1_nvenc', label: 'AV1 (NVENC, Best Quality - RTX 40/30 series)', group: 'nvidia' },
-        { value: 'hevc_nvenc', label: 'HEVC (H.265, NVENC)', group: 'nvidia' },
-        { value: 'h264_nvenc', label: 'H.264 (NVENC, Compatibility)', group: 'nvidia' },
-      );
-    }
+    // Build list of all possible codecs with labels
+    const codecDefinitions = [
+      // NVIDIA
+      { value: 'av1_nvenc', label: 'AV1 (NVIDIA - RTX 40/50 series)', group: 'nvidia' },
+      { value: 'hevc_nvenc', label: 'HEVC (H.265, NVIDIA)', group: 'nvidia' },
+      { value: 'h264_nvenc', label: 'H.264 (NVIDIA)', group: 'nvidia' },
+      // Intel QSV
+      { value: 'av1_qsv', label: 'AV1 (Intel Arc/QSV)', group: 'intel' },
+      { value: 'hevc_qsv', label: 'HEVC (H.265, Intel QSV)', group: 'intel' },
+      { value: 'h264_qsv', label: 'H.264 (Intel QSV)', group: 'intel' },
+      // Intel/AMD VAAPI
+      { value: 'av1_vaapi', label: 'AV1 (VAAPI)', group: 'vaapi' },
+      { value: 'hevc_vaapi', label: 'HEVC (H.265, VAAPI)', group: 'vaapi' },
+      { value: 'h264_vaapi', label: 'H.264 (VAAPI)', group: 'vaapi' },
+      // AMD AMF
+      { value: 'av1_amf', label: 'AV1 (AMD - RX 7000 series)', group: 'amd' },
+      { value: 'hevc_amf', label: 'HEVC (H.265, AMD)', group: 'amd' },
+      { value: 'h264_amf', label: 'H.264 (AMD)', group: 'amd' },
+      // CPU
+      { value: 'libaom-av1', label: 'AV1 (CPU - Highest Quality)', group: 'cpu' },
+      { value: 'libx265', label: 'HEVC (H.265, CPU)', group: 'cpu' },
+      { value: 'libx264', label: 'H.264 (CPU)', group: 'cpu' },
+    ];
     
-    // Intel codecs
-    if (enabledGroups.includes('intel')) {
-      list.push(
-        { value: 'av1_qsv', label: 'AV1 (Intel QSV - Arc GPUs)', group: 'intel' },
-        { value: 'hevc_qsv', label: 'HEVC (H.265, Intel QSV)', group: 'intel' },
-        { value: 'h264_qsv', label: 'H.264 (Intel QSV)', group: 'intel' },
-      );
-      // Also add VAAPI variants if detected as Intel
-      if (codecData.hardware_type === 'intel' && codecData.available_encoders.h264_vaapi) {
-        list.push(
-          { value: 'h264_vaapi', label: 'H.264 (Intel VAAPI)', group: 'intel' },
-          { value: 'hevc_vaapi', label: 'HEVC (H.265, Intel VAAPI)', group: 'intel' },
-        );
-        if (codecData.available_encoders.av1_vaapi) {
-          list.push({ value: 'av1_vaapi', label: 'AV1 (Intel VAAPI)', group: 'intel' });
-        }
+    // Filter to only include codecs that are enabled in settings
+    for (const codec of codecDefinitions) {
+      if (enabledCodecs.includes(codec.value)) {
+        list.push(codec);
       }
-    }
-    
-    // AMD codecs
-    if (enabledGroups.includes('amd')) {
-      // Check if AMF or VAAPI
-      if (codecData.available_encoders.h264_amf) {
-        list.push(
-          { value: 'av1_amf', label: 'AV1 (AMD AMF)', group: 'amd' },
-          { value: 'hevc_amf', label: 'HEVC (H.265, AMD AMF)', group: 'amd' },
-          { value: 'h264_amf', label: 'H.264 (AMD AMF)', group: 'amd' },
-        );
-      } else if (codecData.available_encoders.h264_vaapi) {
-        list.push(
-          { value: 'h264_vaapi', label: 'H.264 (AMD VAAPI)', group: 'amd' },
-          { value: 'hevc_vaapi', label: 'HEVC (H.265, AMD VAAPI)', group: 'amd' },
-        );
-        if (codecData.available_encoders.av1_vaapi) {
-          list.push({ value: 'av1_vaapi', label: 'AV1 (AMD VAAPI)', group: 'amd' });
-        }
-      }
-    }
-    
-    // CPU codecs (always available as fallback)
-    if (enabledGroups.includes('cpu')) {
-      list.push(
-        { value: 'libaom-av1', label: 'AV1 (CPU, Slow but High Quality)', group: 'cpu' },
-        { value: 'libx265', label: 'HEVC (H.265, CPU)', group: 'cpu' },
-        { value: 'libx264', label: 'H.264 (CPU)', group: 'cpu' },
-      );
     }
     
     return list;

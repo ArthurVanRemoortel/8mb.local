@@ -63,14 +63,30 @@ class DefaultPresets(BaseModel):
 
 
 class AvailableCodecsResponse(BaseModel):
-    """Response containing hardware-detected codecs and user-enabled codec groups."""
+    """Response containing hardware-detected codecs and user-enabled codecs."""
     hardware_type: str  # nvidia, intel, amd, cpu
     available_encoders: dict  # {h264: "h264_nvenc", ...}
-    enabled_groups: list[str]  # ["nvidia", "cpu", "intel", "amd"]
+    enabled_codecs: list[str]  # ["h264_nvenc", "hevc_nvenc", ...]
     
 class CodecVisibilitySettings(BaseModel):
-    """Settings for which codec groups to show in UI."""
-    show_nvidia: bool = True
-    show_intel: bool = True
-    show_amd: bool = True
-    show_cpu: bool = True
+    """Settings for which individual codecs to show in UI."""
+    # NVIDIA
+    h264_nvenc: bool = True
+    hevc_nvenc: bool = True
+    av1_nvenc: bool = True
+    # Intel QSV
+    h264_qsv: bool = True
+    hevc_qsv: bool = True
+    av1_qsv: bool = True
+    # AMD VAAPI
+    h264_vaapi: bool = True
+    hevc_vaapi: bool = True
+    av1_vaapi: bool = True
+    # AMD AMF
+    h264_amf: bool = True
+    hevc_amf: bool = True
+    av1_amf: bool = True
+    # CPU
+    libx264: bool = True
+    libx265: bool = True
+    libaom_av1: bool = True  # Note: using underscore because dash is invalid in Python identifiers

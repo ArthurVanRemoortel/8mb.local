@@ -146,30 +146,62 @@ def update_default_presets(
 
 
 def get_codec_visibility_settings() -> dict:
-    """Get codec visibility settings"""
+    """Get individual codec visibility settings"""
     env_vars = read_env_file()
     
+    def get_bool(key: str, default: str = 'true') -> bool:
+        return os.getenv(key, env_vars.get(key, default)).lower() == 'true'
+    
     return {
-        'show_nvidia': os.getenv('SHOW_NVIDIA_CODECS', env_vars.get('SHOW_NVIDIA_CODECS', 'true')).lower() == 'true',
-        'show_intel': os.getenv('SHOW_INTEL_CODECS', env_vars.get('SHOW_INTEL_CODECS', 'true')).lower() == 'true',
-        'show_amd': os.getenv('SHOW_AMD_CODECS', env_vars.get('SHOW_AMD_CODECS', 'true')).lower() == 'true',
-        'show_cpu': os.getenv('SHOW_CPU_CODECS', env_vars.get('SHOW_CPU_CODECS', 'true')).lower() == 'true',
+        # NVIDIA
+        'h264_nvenc': get_bool('CODEC_H264_NVENC'),
+        'hevc_nvenc': get_bool('CODEC_HEVC_NVENC'),
+        'av1_nvenc': get_bool('CODEC_AV1_NVENC'),
+        # Intel QSV
+        'h264_qsv': get_bool('CODEC_H264_QSV'),
+        'hevc_qsv': get_bool('CODEC_HEVC_QSV'),
+        'av1_qsv': get_bool('CODEC_AV1_QSV'),
+        # AMD VAAPI
+        'h264_vaapi': get_bool('CODEC_H264_VAAPI'),
+        'hevc_vaapi': get_bool('CODEC_HEVC_VAAPI'),
+        'av1_vaapi': get_bool('CODEC_AV1_VAAPI'),
+        # AMD AMF
+        'h264_amf': get_bool('CODEC_H264_AMF'),
+        'hevc_amf': get_bool('CODEC_HEVC_AMF'),
+        'av1_amf': get_bool('CODEC_AV1_AMF'),
+        # CPU
+        'libx264': get_bool('CODEC_LIBX264'),
+        'libx265': get_bool('CODEC_LIBX265'),
+        'libaom_av1': get_bool('CODEC_LIBAOM_AV1'),
     }
 
 
-def update_codec_visibility_settings(show_nvidia: bool, show_intel: bool, show_amd: bool, show_cpu: bool):
-    """Update codec visibility settings in .env file"""
+def update_codec_visibility_settings(settings: dict):
+    """Update individual codec visibility settings in .env file"""
     env_vars = read_env_file()
     
-    env_vars['SHOW_NVIDIA_CODECS'] = 'true' if show_nvidia else 'false'
-    env_vars['SHOW_INTEL_CODECS'] = 'true' if show_intel else 'false'
-    env_vars['SHOW_AMD_CODECS'] = 'true' if show_amd else 'false'
-    env_vars['SHOW_CPU_CODECS'] = 'true' if show_cpu else 'false'
+    codec_keys = {
+        'h264_nvenc': 'CODEC_H264_NVENC',
+        'hevc_nvenc': 'CODEC_HEVC_NVENC',
+        'av1_nvenc': 'CODEC_AV1_NVENC',
+        'h264_qsv': 'CODEC_H264_QSV',
+        'hevc_qsv': 'CODEC_HEVC_QSV',
+        'av1_qsv': 'CODEC_AV1_QSV',
+        'h264_vaapi': 'CODEC_H264_VAAPI',
+        'hevc_vaapi': 'CODEC_HEVC_VAAPI',
+        'av1_vaapi': 'CODEC_AV1_VAAPI',
+        'h264_amf': 'CODEC_H264_AMF',
+        'hevc_amf': 'CODEC_HEVC_AMF',
+        'av1_amf': 'CODEC_AV1_AMF',
+        'libx264': 'CODEC_LIBX264',
+        'libx265': 'CODEC_LIBX265',
+        'libaom_av1': 'CODEC_LIBAOM_AV1',
+    }
+    
+    for codec_name, env_key in codec_keys.items():
+        if codec_name in settings:
+            value = 'true' if settings[codec_name] else 'false'
+            env_vars[env_key] = value
+            os.environ[env_key] = value
     
     write_env_file(env_vars)
-    
-    # Update environment variables for current process
-    os.environ['SHOW_NVIDIA_CODECS'] = 'true' if show_nvidia else 'false'
-    os.environ['SHOW_INTEL_CODECS'] = 'true' if show_intel else 'false'
-    os.environ['SHOW_AMD_CODECS'] = 'true' if show_amd else 'false'
-    os.environ['SHOW_CPU_CODECS'] = 'true' if show_cpu else 'false'

@@ -205,28 +205,41 @@ async def get_available_codecs() -> AvailableCodecsResponse:
         # Get user codec visibility settings
         codec_settings = settings_manager.get_codec_visibility_settings()
         
-        # Determine which codec groups are enabled
-        enabled_groups = []
-        if codec_settings.get("show_nvidia", True):
-            enabled_groups.append("nvidia")
-        if codec_settings.get("show_intel", True):
-            enabled_groups.append("intel")
-        if codec_settings.get("show_amd", True):
-            enabled_groups.append("amd")
-        if codec_settings.get("show_cpu", True):
-            enabled_groups.append("cpu")
+        # Build list of enabled codecs based on user settings
+        enabled_codecs = []
+        codec_map = {
+            'h264_nvenc': codec_settings.get('h264_nvenc', True),
+            'hevc_nvenc': codec_settings.get('hevc_nvenc', True),
+            'av1_nvenc': codec_settings.get('av1_nvenc', True),
+            'h264_qsv': codec_settings.get('h264_qsv', True),
+            'hevc_qsv': codec_settings.get('hevc_qsv', True),
+            'av1_qsv': codec_settings.get('av1_qsv', True),
+            'h264_vaapi': codec_settings.get('h264_vaapi', True),
+            'hevc_vaapi': codec_settings.get('hevc_vaapi', True),
+            'av1_vaapi': codec_settings.get('av1_vaapi', True),
+            'h264_amf': codec_settings.get('h264_amf', True),
+            'hevc_amf': codec_settings.get('hevc_amf', True),
+            'av1_amf': codec_settings.get('av1_amf', True),
+            'libx264': codec_settings.get('libx264', True),
+            'libx265': codec_settings.get('libx265', True),
+            'libaom-av1': codec_settings.get('libaom_av1', True),
+        }
+        
+        for codec, is_enabled in codec_map.items():
+            if is_enabled:
+                enabled_codecs.append(codec)
         
         return AvailableCodecsResponse(
             hardware_type=hw_info.get("type", "cpu"),
             available_encoders=hw_info.get("available_encoders", {}),
-            enabled_groups=enabled_groups
+            enabled_codecs=enabled_codecs
         )
     except Exception as e:
         # Fallback
         return AvailableCodecsResponse(
             hardware_type="cpu",
             available_encoders={"h264": "libx264", "hevc": "libx265", "av1": "libaom-av1"},
-            enabled_groups=["cpu"]
+            enabled_codecs=["libx264", "libx265", "libaom-av1"]
         )
 
 
@@ -322,14 +335,9 @@ async def update_codec_visibility_settings(
     codec_settings: CodecVisibilitySettings,
     _auth=Depends(basic_auth)  # Require auth to change settings
 ):
-    """Update codec visibility settings"""
+    """Update individual codec visibility settings"""
     try:
-        settings_manager.update_codec_visibility_settings(
-            show_nvidia=codec_settings.show_nvidia,
-            show_intel=codec_settings.show_intel,
-            show_amd=codec_settings.show_amd,
-            show_cpu=codec_settings.show_cpu
-        )
+        settings_manager.update_codec_visibility_settings(codec_settings.dict())
         return {"status": "success", "message": "Codec visibility settings updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

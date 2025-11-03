@@ -12,10 +12,21 @@
 	tune: string;
   };
   type CodecVisibilitySettings = {
-	show_nvidia: boolean;
-	show_intel: boolean;
-	show_amd: boolean;
-	show_cpu: boolean;
+	h264_nvenc: boolean;
+	hevc_nvenc: boolean;
+	av1_nvenc: boolean;
+	h264_qsv: boolean;
+	hevc_qsv: boolean;
+	av1_qsv: boolean;
+	h264_vaapi: boolean;
+	hevc_vaapi: boolean;
+	av1_vaapi: boolean;
+	h264_amf: boolean;
+	hevc_amf: boolean;
+	av1_amf: boolean;
+	libx264: boolean;
+	libx265: boolean;
+	libaom_av1: boolean;
   };
 
   let saving = false;
@@ -37,11 +48,24 @@
   let container = 'mp4';
   let tune = 'hq';
 
-  // Codec visibility
-  let showNvidia = true;
-  let showIntel = true;
-  let showAmd = true;
-  let showCpu = true;
+  // Codec visibility - individual codecs
+  let codecSettings: CodecVisibilitySettings = {
+	h264_nvenc: true,
+	hevc_nvenc: true,
+	av1_nvenc: true,
+	h264_qsv: true,
+	hevc_qsv: true,
+	av1_qsv: true,
+	h264_vaapi: true,
+	hevc_vaapi: true,
+	av1_vaapi: true,
+	h264_amf: true,
+	hevc_amf: true,
+	av1_amf: true,
+	libx264: true,
+	libx265: true,
+	libaom_av1: true,
+  };
 
   onMount(async () => {
 	try {
@@ -67,10 +91,7 @@
 	  }
 	  if (codecsRes.ok) {
 		const c: CodecVisibilitySettings = await codecsRes.json();
-		showNvidia = c.show_nvidia;
-		showIntel = c.show_intel;
-		showAmd = c.show_amd;
-		showCpu = c.show_cpu;
+		codecSettings = c;
 	  }
 	} catch (e) {
 	  error = 'Failed to load settings';
@@ -157,12 +178,7 @@
 	  const res = await fetch('/api/settings/codecs', {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-		  show_nvidia: showNvidia,
-		  show_intel: showIntel,
-		  show_amd: showAmd,
-		  show_cpu: showCpu
-		})
+		body: JSON.stringify(codecSettings)
 	  });
 	  if (res.ok) {
 		const data = await res.json();
@@ -241,40 +257,103 @@
 
   <!-- Codec Visibility -->
   <div class="card">
-	<div class="title">Codec Visibility</div>
-	<p class="label" style="margin-bottom:12px; color:#9ca3af">
-	  Control which codec groups appear in the compression page dropdown. Only codecs supported by your hardware will be available regardless of these settings.
+	<div class="title">Available Codecs</div>
+	<p class="label" style="margin-bottom:16px; color:#9ca3af">
+	  Select which codecs appear in the compression page dropdown. Enable codecs that your hardware supports.
 	  <a href="/gpu-support" style="color:#3b82f6; text-decoration:underline">View GPU encoding support →</a>
 	</p>
 
-	<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
-	  <div class="switch">
-		<input id="show_nvidia" type="checkbox" bind:checked={showNvidia} />
-		<label class="label" for="show_nvidia" style="margin:0">
-		  <span style="color:#10b981; font-weight:600">NVIDIA</span> (NVENC)
-		</label>
-	  </div>
-	  <div class="switch">
-		<input id="show_intel" type="checkbox" bind:checked={showIntel} />
-		<label class="label" for="show_intel" style="margin:0">
-		  <span style="color:#3b82f6; font-weight:600">Intel</span> (QSV)
-		</label>
-	  </div>
-	  <div class="switch">
-		<input id="show_amd" type="checkbox" bind:checked={showAmd} />
-		<label class="label" for="show_amd" style="margin:0">
-		  <span style="color:#ef4444; font-weight:600">AMD</span> (VCN)
-		</label>
-	  </div>
-	  <div class="switch">
-		<input id="show_cpu" type="checkbox" bind:checked={showCpu} />
-		<label class="label" for="show_cpu" style="margin:0">
-		  <span style="color:#6b7280; font-weight:600">CPU</span> (Software)
-		</label>
+	<!-- NVIDIA Section -->
+	<div style="margin-bottom:20px">
+	  <h3 style="color:#10b981; font-weight:600; font-size:15px; margin-bottom:8px">NVIDIA (NVENC)</h3>
+	  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px">
+		<div class="switch">
+		  <input id="av1_nvenc" type="checkbox" bind:checked={codecSettings.av1_nvenc} />
+		  <label class="label" for="av1_nvenc" style="margin:0">AV1 (RTX 40/50)</label>
+		</div>
+		<div class="switch">
+		  <input id="hevc_nvenc" type="checkbox" bind:checked={codecSettings.hevc_nvenc} />
+		  <label class="label" for="hevc_nvenc" style="margin:0">HEVC (H.265)</label>
+		</div>
+		<div class="switch">
+		  <input id="h264_nvenc" type="checkbox" bind:checked={codecSettings.h264_nvenc} />
+		  <label class="label" for="h264_nvenc" style="margin:0">H.264</label>
+		</div>
 	  </div>
 	</div>
 
-	<div style="margin-top:12px">
+	<!-- Intel Section -->
+	<div style="margin-bottom:20px">
+	  <h3 style="color:#3b82f6; font-weight:600; font-size:15px; margin-bottom:8px">Intel (Quick Sync / QSV)</h3>
+	  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px">
+		<div class="switch">
+		  <input id="av1_qsv" type="checkbox" bind:checked={codecSettings.av1_qsv} />
+		  <label class="label" for="av1_qsv" style="margin:0">AV1 (Arc GPUs)</label>
+		</div>
+		<div class="switch">
+		  <input id="hevc_qsv" type="checkbox" bind:checked={codecSettings.hevc_qsv} />
+		  <label class="label" for="hevc_qsv" style="margin:0">HEVC (H.265)</label>
+		</div>
+		<div class="switch">
+		  <input id="h264_qsv" type="checkbox" bind:checked={codecSettings.h264_qsv} />
+		  <label class="label" for="h264_qsv" style="margin:0">H.264</label>
+		</div>
+	  </div>
+	</div>
+
+	<!-- AMD Section -->
+	<div style="margin-bottom:20px">
+	  <h3 style="color:#ef4444; font-weight:600; font-size:15px; margin-bottom:8px">AMD (VCN / AMF / VAAPI)</h3>
+	  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-bottom:12px">
+		<div class="switch">
+		  <input id="av1_amf" type="checkbox" bind:checked={codecSettings.av1_amf} />
+		  <label class="label" for="av1_amf" style="margin:0">AV1 (AMF, RX 7000)</label>
+		</div>
+		<div class="switch">
+		  <input id="hevc_amf" type="checkbox" bind:checked={codecSettings.hevc_amf} />
+		  <label class="label" for="hevc_amf" style="margin:0">HEVC AMF (Windows)</label>
+		</div>
+		<div class="switch">
+		  <input id="h264_amf" type="checkbox" bind:checked={codecSettings.h264_amf} />
+		  <label class="label" for="h264_amf" style="margin:0">H.264 AMF (Windows)</label>
+		</div>
+	  </div>
+	  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px">
+		<div class="switch">
+		  <input id="av1_vaapi" type="checkbox" bind:checked={codecSettings.av1_vaapi} />
+		  <label class="label" for="av1_vaapi" style="margin:0">AV1 VAAPI (Linux)</label>
+		</div>
+		<div class="switch">
+		  <input id="hevc_vaapi" type="checkbox" bind:checked={codecSettings.hevc_vaapi} />
+		  <label class="label" for="hevc_vaapi" style="margin:0">HEVC VAAPI (Linux)</label>
+		</div>
+		<div class="switch">
+		  <input id="h264_vaapi" type="checkbox" bind:checked={codecSettings.h264_vaapi} />
+		  <label class="label" for="h264_vaapi" style="margin:0">H.264 VAAPI (Linux)</label>
+		</div>
+	  </div>
+	</div>
+
+	<!-- CPU Section -->
+	<div style="margin-bottom:20px">
+	  <h3 style="color:#9ca3af; font-weight:600; font-size:15px; margin-bottom:8px">CPU (Software Encoding)</h3>
+	  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px">
+		<div class="switch">
+		  <input id="libaom_av1" type="checkbox" bind:checked={codecSettings.libaom_av1} />
+		  <label class="label" for="libaom_av1" style="margin:0">AV1 (Highest Quality)</label>
+		</div>
+		<div class="switch">
+		  <input id="libx265" type="checkbox" bind:checked={codecSettings.libx265} />
+		  <label class="label" for="libx265" style="margin:0">HEVC (H.265)</label>
+		</div>
+		<div class="switch">
+		  <input id="libx264" type="checkbox" bind:checked={codecSettings.libx264} />
+		  <label class="label" for="libx264" style="margin:0">H.264</label>
+		</div>
+	  </div>
+	</div>
+
+	<div style="margin-top:16px">
 	  <button class="btn" on:click={saveCodecs} disabled={saving}>{saving ? 'Saving…' : 'Save codec settings'}</button>
 	</div>
   </div>
