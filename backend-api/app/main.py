@@ -193,22 +193,7 @@ async def get_hardware_info():
 
 
 # Serve pre-built frontend (for unified container deployment)
-frontend_build = Path("/app/frontend-build/client")
+frontend_build = Path("/app/frontend-build")
 if frontend_build.exists():
-    # Mount static assets
-    app.mount("/_app", StaticFiles(directory=frontend_build / "_app", html=False), name="static-app")
-    
-    # Serve index.html for all non-API routes (SPA fallback)
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        # Don't serve frontend for API routes
-        if full_path.startswith("api/"):
-            raise HTTPException(status_code=404, detail="Not found")
-        
-        # Check if requested file exists
-        requested_file = frontend_build / full_path
-        if requested_file.is_file():
-            return FileResponse(requested_file)
-        
-        # Default to index.html (SPA)
-        return FileResponse(frontend_build / "index.html")
+    # Mount static assets at root
+    app.mount("/", StaticFiles(directory=frontend_build, html=True), name="static-files")

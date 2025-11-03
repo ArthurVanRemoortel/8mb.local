@@ -1,8 +1,13 @@
-import adapter from '@sveltejs/adapter-node';
+import adapter from '@sveltejs/adapter-static';
 
 const config = {
   kit: {
-    adapter: adapter(),
+    adapter: adapter({
+      pages: 'build',
+      assets: 'build',
+      fallback: 'index.html',
+      precompress: false
+    }),
     alias: {
       $lib: 'src/lib'
     }
