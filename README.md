@@ -117,7 +117,7 @@ The system will automatically select the best available encoder at runtime. You'
 ## Installation
 Run with prebuilt images (recommended) or build locally.
 
-### Option 1: Single Container (Simplest - Recommended)
+### Option 1: Single Container (Simplest - Recommended) ⭐
 Run everything in ONE container with embedded Redis:
 
 ```bash
@@ -127,7 +127,7 @@ docker run -d \
   -v ./outputs:/app/outputs \
   --gpus all \
   --name 8mblocal \
-  jms1717/8mblocal:single-container
+  jms1717/8mblocal:latest
 ```
 
 Or with docker-compose:
@@ -170,7 +170,7 @@ docker compose -f docker-compose.multi-build.yml up --build -d
 
 **Single container:**
 ```bash
-docker pull jms1717/8mblocal:single-container
+docker pull jms1717/8mblocal:latest
 docker compose -f docker-compose.single.yml up -d
 ```
 
