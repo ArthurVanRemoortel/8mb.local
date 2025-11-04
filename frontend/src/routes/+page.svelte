@@ -40,10 +40,20 @@
   
   // Auto-analyze when target size or audio bitrate changes (if file exists and was already analyzed)
   // Track last values to avoid infinite loops
+  let autoAnalyzeEnabled = true;
   let lastAutoAnalyzeTarget = targetMB;
   let lastAutoAnalyzeAudio = audioKbps;
   
   $: {
+    if (!autoAnalyzeEnabled) {
+      // Don't trigger auto-analyze while initial upload is in progress
+      // or while we explicitly suppress it
+      // Keep last values in sync
+      lastAutoAnalyzeTarget = targetMB;
+      lastAutoAnalyzeAudio = audioKbps;
+      // Skip
+      // Note: leaving this scope without scheduling upload
+    } else {
     // Only trigger if the values actually changed AND file was already uploaded
     const targetChanged = targetMB !== lastAutoAnalyzeTarget;
     const audioChanged = audioKbps !== lastAutoAnalyzeAudio;
@@ -65,6 +75,7 @@
         }, 500);
       }
     }
+    }
   }
 
   let jobInfo: any = null;
@@ -79,6 +90,9 @@
   let isUploading = false;
   let uploadProgress = 0;
   let isCancelling = false;
+  // Download readiness
+  let isReady: boolean = false;
+  let readyFilename: string | null = null;
   // ETA / status helpers
   let startedAt: number | null = null;
   let etaSeconds: number | null = null;
@@ -296,6 +310,8 @@
   async function doUpload(){
     if (!file) return;
     if (isUploading || isAnalyzing) return;
+    // Disable reactive auto-analyze during initial upload cycle
+    autoAnalyzeEnabled = false;
     // Skip re-upload when same file is already uploaded; recompute client-side estimates only
     if (uploadedFileName === file.name && jobInfo?.filename) {
       warnText = (estimated && estimated.video_kbps < 100) ? `Warning: Very low video bitrate (${Math.round(estimated.video_kbps)} kbps)` : null;
@@ -318,6 +334,10 @@
     } finally {
       isUploading = false;
       isAnalyzing = false;
+      // Re-enable reactive auto-analyze after initial analyze completes
+      lastAutoAnalyzeTarget = targetMB;
+      lastAutoAnalyzeAudio = audioKbps;
+      autoAnalyzeEnabled = true;
     }
   }
 
@@ -327,6 +347,8 @@
     errorText = null;
     try {
       isCompressing = true;
+      isReady = false;
+      readyFilename = null;
       hasProgress = false;
       isFinalizing = false;
       startedAt = Date.now();
@@ -379,6 +401,17 @@
               etaLabel = etaSeconds != null ? formatEta(etaSeconds) : null;
             }
           }
+          if (data.type === 'ready') {
+            // Backend marked file ready to download
+            isReady = true;
+            readyFilename = data.output_filename || null;
+            displayedProgress = Math.max(displayedProgress, 100);
+            isFinalizing = false;
+            // Auto-download if enabled
+            if (autoDownload && taskId) {
+              setTimeout(() => { window.location.href = downloadUrl(taskId!); }, 200);
+            }
+          }
           if (data.type === 'log' && data.message) {
             // Update mini-ETA from speed if present
             if (data.message.startsWith('speed=')) {
@@ -417,23 +450,20 @@
             isFinalizing = false;
             startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false;
             try { esRef?.close(); } catch {}
-          } else if (data.type === 'canceled') {
-            isCompressing = false;
-            isFinalizing = false;
-            errorText = 'Job canceled';
-            
             // Play sound when done if enabled
             if (playSoundWhenDone) {
               const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
               audio.play().catch(() => {});
             }
-            
-            // Auto-download if enabled
-            if (autoDownload && taskId) {
-              setTimeout(() => {
-                window.location.href = downloadUrl(taskId!);
-              }, 500);
+            // Auto-download if enabled (if not already triggered on 'ready')
+            if (autoDownload && taskId && !isReady) {
+              setTimeout(() => { window.location.href = downloadUrl(taskId!); }, 200);
             }
+          } else if (data.type === 'canceled') {
+            isCompressing = false;
+            isFinalizing = false;
+            errorText = 'Job canceled';
+            // No sound and no download on cancellation
           }
           if (data.type === 'error') { logLines = [data.message, ...logLines]; isCompressing = false; isFinalizing = false; startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false; try { esRef?.close(); } catch {} }
         } catch {}
@@ -490,7 +520,9 @@
     }
   }
 
-  function reset(){ file=null; uploadedFileName=null; jobInfo=null; taskId=null; progress=0; displayedProgress=0; logLines=[]; doneStats=null; warnText=null; errorText=null; isUploading=false; isCompressing=false; isFinalizing=false; decodeMethod=null; encodeMethod=null; try { esRef?.close(); } catch {} }
+  // Remove older reset; replace with one that clears readiness flags too
+  
+  function reset(){ file=null; uploadedFileName=null; jobInfo=null; taskId=null; progress=0; displayedProgress=0; logLines=[]; doneStats=null; warnText=null; errorText=null; isUploading=false; isCompressing=false; isFinalizing=false; decodeMethod=null; encodeMethod=null; isReady=false; readyFilename=null; try { esRef?.close(); } catch {} }
   $: (() => { /* clear ETA when not compressing */ if (!isCompressing) { startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false; isFinalizing = false; } })();
 
   async function onCancel(){
@@ -807,14 +839,17 @@
         <pre class="mt-2 text-xs whitespace-pre-wrap">{logLines.join('\n')}</pre>
       </details>
 
+      {#if isReady && !doneStats}
+        <div class="mt-4 text-sm">
+          <p>Ready to download.</p>
+          <a class="btn inline-block mt-2" href={downloadUrl(taskId)} target="_blank">Download</a>
+        </div>
+      {/if}
+
       {#if doneStats}
         <div class="mt-4 text-sm">
           <p>Completed. Final size: {doneStats.final_size_mb} MB</p>
-          {#if doneStats.output_filename}
-            <a class="btn inline-block mt-2" href={downloadUrl(doneStats.output_filename)} target="_blank">Download</a>
-          {:else}
-            <a class="btn inline-block mt-2" href={downloadUrl(taskId)} target="_blank">Download</a>
-          {/if}
+          <a class="btn inline-block mt-2" href={downloadUrl(taskId)} target="_blank">Download</a>
         </div>
       {/if}
     </div>

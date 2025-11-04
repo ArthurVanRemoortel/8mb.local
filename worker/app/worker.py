@@ -523,6 +523,18 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
     _publish(self.request.id, {"type": "progress", "progress": 100.0})
     _publish(self.request.id, {"type": "log", "message": "Finalizing: calculating file size and saving metadata..."})
 
+    # Make the file downloadable immediately after encode finishes
+    # Expose output_path early via task meta and send a 'ready' event for the UI
+    try:
+        self.update_state(state="PROGRESS", meta={"output_path": output_path, "progress": 100.0, "detail": "ready"})
+    except Exception:
+        pass
+    try:
+        from pathlib import Path as _Path
+        _publish(self.request.id, {"type": "ready", "output_filename": _Path(output_path).name})
+    except Exception:
+        pass
+
     # Success: compute final stats
     try:
         final_size = os.path.getsize(output_path)
