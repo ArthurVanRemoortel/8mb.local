@@ -90,6 +90,10 @@ COPY --from=frontend-build /frontend/build /app/frontend-build
 # Create necessary directories
 RUN mkdir -p /app/uploads /app/outputs /var/log/supervisor /var/lib/redis /var/log/redis
 
+# Set NVIDIA driver capabilities for NVENC/NVDEC support
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+ENV NVIDIA_VISIBLE_DEVICES=all
+
 # Configure supervisord
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
