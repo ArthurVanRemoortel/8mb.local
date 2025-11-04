@@ -175,11 +175,11 @@ async def on_startup():
         try:
             await redis.set("startup:boot_id", boot_id)
             await redis.set("startup:boot_ts", str(int(time.time())))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to set boot_id in Redis: {e}")
         asyncio.create_task(_sync_codec_settings_from_tests())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Startup initialization failed: {e}")
 
 
 async def _sync_codec_settings_from_tests(timeout_s: int = 60):

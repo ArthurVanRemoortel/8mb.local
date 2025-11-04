@@ -525,17 +525,20 @@
           if (statusRes.ok) {
             const statusData = await statusRes.json();
             console.log('[Watchdog] Status check:', statusData);
-            // Check if file is ready by attempting download with very short wait
-            if (statusData.state === 'SUCCESS' || statusData.detail === 'ready') {
-              const dlRes = await fetch(`${downloadUrl(taskId)}?wait=0.5`, { method: 'HEAD', cache: 'no-store' });
-              if (dlRes.ok) {
-                console.log('[Watchdog] File ready! Transitioning...');
-                isReady = true;
-                isFinalizing = false;
-                showTryDownload = false;
-                clearInterval(finalizePoller);
-                finalizePoller = null;
-                if (autoDownload) setTimeout(() => { window.location.href = downloadUrl(taskId!); }, 150);
+            // Only proceed if task has actually started (not PENDING)
+            if (statusData.state !== 'PENDING' && statusData.state !== 'RETRY') {
+              // Check if file is ready by attempting download with very short wait
+              if (statusData.state === 'SUCCESS' || statusData.detail === 'ready' || statusData.detail === 'done') {
+                const dlRes = await fetch(`${downloadUrl(taskId)}?wait=0.5`, { method: 'HEAD', cache: 'no-store' });
+                if (dlRes.ok) {
+                  console.log('[Watchdog] File ready! Transitioning...');
+                  isReady = true;
+                  isFinalizing = false;
+                  showTryDownload = false;
+                  clearInterval(finalizePoller);
+                  finalizePoller = null;
+                  if (autoDownload) setTimeout(() => { window.location.href = downloadUrl(taskId!); }, 150);
+                }
               }
             }
           }
