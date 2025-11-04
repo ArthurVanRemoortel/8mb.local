@@ -49,14 +49,16 @@
     const audioChanged = audioKbps !== lastAutoAnalyzeAudio;
     
     if ((targetChanged || audioChanged) && file && uploadedFileName === file.name && jobInfo) {
+      // Update tracking IMMEDIATELY to prevent double-trigger
+      lastAutoAnalyzeTarget = targetMB;
+      lastAutoAnalyzeAudio = audioKbps;
+      
       // Debounce: clear existing timer and set new one
       if (typeof window !== 'undefined') {
         clearTimeout((window as any).__analyzeTimer);
         (window as any).__analyzeTimer = setTimeout(() => {
           if (file && !isUploading && !isAnalyzing) {
             console.log('Settings changed, re-analyzing...');
-            lastAutoAnalyzeTarget = targetMB;
-            lastAutoAnalyzeAudio = audioKbps;
             uploadedFileName = null; // Force re-upload
             doUpload();
           }
@@ -85,6 +87,7 @@
   let hasProgress = false;
   let decodeMethod: string | null = null;
   let encodeMethod: string | null = null;
+  let isFinalizing = false; // Track if we're in the finalization phase
   // Support widget state
   let showSupport = false;
   function toggleSupport(){ showSupport = !showSupport; }
@@ -325,6 +328,7 @@
     try {
       isCompressing = true;
       hasProgress = false;
+      isFinalizing = false;
       startedAt = Date.now();
       etaSeconds = null;
       etaLabel = null;
@@ -358,8 +362,8 @@
         try { const data = JSON.parse(ev.data);
           if (data.type === 'progress') {
             progress = data.progress;
-            // Cap UI at 99% until done event to avoid long 100% stalls
-            displayedProgress = Math.min(99, Math.max(0, progress || 0));
+            // Show actual progress including 100% (backend sends 100% before finalization now)
+            displayedProgress = Math.max(0, progress || 0);
             if (progress > 0) {
               hasProgress = true;
               // Prefer duration/speed-based ETA when available
@@ -386,6 +390,10 @@
                 }
               }
             }
+            // Detect finalization phase
+            if (data.message.includes('Finalizing:')) {
+              isFinalizing = true;
+            }
             // Capture pipeline hints
             if (data.message.startsWith('Decoder:')) {
               decodeMethod = data.message.replace('Decoder: ', '').trim();
@@ -406,10 +414,12 @@
             progress = 100;
             displayedProgress = 100;
             isCompressing = false;
+            isFinalizing = false;
             startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false;
             try { esRef?.close(); } catch {}
           } else if (data.type === 'canceled') {
             isCompressing = false;
+            isFinalizing = false;
             errorText = 'Job canceled';
             
             // Play sound when done if enabled
@@ -425,7 +435,7 @@
               }, 500);
             }
           }
-          if (data.type === 'error') { logLines = [data.message, ...logLines]; isCompressing = false; startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false; try { esRef?.close(); } catch {} }
+          if (data.type === 'error') { logLines = [data.message, ...logLines]; isCompressing = false; isFinalizing = false; startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false; try { esRef?.close(); } catch {} }
         } catch {}
       }
       es.onerror = () => {
@@ -480,8 +490,8 @@
     }
   }
 
-  function reset(){ file=null; uploadedFileName=null; jobInfo=null; taskId=null; progress=0; displayedProgress=0; logLines=[]; doneStats=null; warnText=null; errorText=null; isUploading=false; isCompressing=false; decodeMethod=null; encodeMethod=null; try { esRef?.close(); } catch {} }
-  $: (() => { /* clear ETA when not compressing */ if (!isCompressing) { startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false; } })();
+  function reset(){ file=null; uploadedFileName=null; jobInfo=null; taskId=null; progress=0; displayedProgress=0; logLines=[]; doneStats=null; warnText=null; errorText=null; isUploading=false; isCompressing=false; isFinalizing=false; decodeMethod=null; encodeMethod=null; try { esRef?.close(); } catch {} }
+  $: (() => { /* clear ETA when not compressing */ if (!isCompressing) { startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false; isFinalizing = false; } })();
 
   async function onCancel(){
     if (!taskId || isCancelling) return;
@@ -785,11 +795,11 @@
         <div class="h-3 bg-indigo-600 rounded" style={`width:${displayedProgress}%`}></div>
       </div>
       <div class="mt-2 text-xs text-gray-400 flex items-center justify-between">
-        <span>{displayedProgress}%{#if isCompressing && displayedProgress>=99 && !doneStats} (finalizing…){/if}</span>
+        <span>{displayedProgress}%{#if isCompressing && isFinalizing && !doneStats} (finalizing…){/if}</span>
         {#if isCompressing && displayedProgress<99 && etaLabel}
           <span>~{etaLabel} remaining</span>
-        {:else if isCompressing && displayedProgress>=99 && !doneStats && !fastMp4Finalize}
-          <span class="text-amber-400">Tip: Enable "Fast finalize" to avoid this wait</span>
+        {:else if isCompressing && isFinalizing && !doneStats}
+          <span class="text-gray-400">Saving metadata...</span>
         {/if}
       </div>
       <details class="mt-3" open>
