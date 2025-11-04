@@ -29,6 +29,8 @@
   let saving = false;
   let message = '';
   let error = '';
+	// History toggle
+	let historyEnabled = false;
 
   // Auth
   let authEnabled = false;
