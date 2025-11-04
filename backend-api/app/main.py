@@ -153,11 +153,22 @@ async def on_startup():
 
 @app.post("/api/upload", response_model=UploadResponse, dependencies=[Depends(basic_auth)])
 async def upload(file: UploadFile = File(...), target_size_mb: float = 25.0, audio_bitrate_kbps: int = 128):
+    # File size limit to prevent OOM (default 5GB)
+    MAX_FILE_SIZE = int(os.getenv("MAX_UPLOAD_SIZE_MB", "5120")) * 1024 * 1024
+    
     job_id = str(uuid.uuid4())
     dest = UPLOADS_DIR / f"{job_id}_{file.filename}"
-    # save file
+    
+    # Save file with size check
+    total_size = 0
     with dest.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
+        while chunk := await file.read(8192):  # Read in chunks
+            total_size += len(chunk)
+            if total_size > MAX_FILE_SIZE:
+                dest.unlink(missing_ok=True)  # Clean up partial file
+                raise HTTPException(status_code=413, detail=f"File too large. Max size: {MAX_FILE_SIZE // (1024*1024)}MB")
+            out.write(chunk)
+    
     # ffprobe
     info = _ffprobe(dest)
     total_kbps, video_kbps, warn = _calc_bitrates(target_size_mb, info["duration"], audio_bitrate_kbps)

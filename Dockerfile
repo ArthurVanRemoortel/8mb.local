@@ -4,12 +4,13 @@
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-build
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \
-    build-essential yasm cmake pkg-config git wget \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential yasm cmake pkg-config git wget ca-certificates \
     libnuma-dev libx264-dev libx265-dev libvpx-dev libopus-dev \
     libaom-dev libdav1d-dev \
-    libva-dev libdrm-dev \
-    && rm -rf /var/lib/apt/lists/*
+    libva-dev libdrm-dev
 
 WORKDIR /build
 
@@ -19,32 +20,37 @@ RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && git checkout sdk/12.1 && make install && cd ..
 
 # Build FFmpeg with all hardware acceleration support
-RUN wget https://ffmpeg.org/releases/ffmpeg-6.1.1.tar.xz && \
+RUN wget -q https://ffmpeg.org/releases/ffmpeg-6.1.1.tar.xz && \
         tar xf ffmpeg-6.1.1.tar.xz && cd ffmpeg-6.1.1 && \
         ./configure \
       --enable-nonfree --enable-gpl \
       --enable-cuda-nvcc --enable-libnpp --enable-nvenc \
       --enable-vaapi \
-                            --enable-libx264 --enable-libx265 --enable-libvpx --enable-libopus --enable-libaom --enable-libdav1d \
+      --enable-libx264 --enable-libx265 --enable-libvpx --enable-libopus --enable-libaom --enable-libdav1d \
       --extra-cflags=-I/usr/local/cuda/include \
-      --extra-ldflags=-L/usr/local/cuda/lib64 && \
+      --extra-ldflags=-L/usr/local/cuda/lib64 \
+      --disable-doc --disable-htmlpages --disable-manpages --disable-podpages --disable-txtpages && \
     make -j$(nproc) && make install && ldconfig && \
     # Strip binaries to reduce size
-    strip /usr/local/bin/ffmpeg /usr/local/bin/ffprobe && \
+    strip --strip-all /usr/local/bin/ffmpeg /usr/local/bin/ffprobe && \
     # Clean up build artifacts
-        cd .. && rm -rf ffmpeg-6.1.1 ffmpeg-6.1.1.tar.xz nv-codec-headers
+        cd .. && rm -rf ffmpeg-6.1.1 ffmpeg-6.1.1.tar.xz nv-codec-headers /build
 
 # Stage 2: Build Frontend
 FROM node:20-alpine AS frontend-build
 
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --only=production
 
 COPY frontend/ ./
 # Build with empty backend URL (same-origin deployment)
 ENV PUBLIC_BACKEND_URL=""
-RUN npm run build
+RUN npm run build && \
+    # Remove source maps and unnecessary files to reduce size
+    find build -name "*.map" -delete && \
+    find build -name "*.ts" -delete
 
 # Stage 3: Runtime with all services
 # Using CUDA 11.8 runtime for compatibility with older NVIDIA drivers (535.x series)
@@ -52,12 +58,15 @@ FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
-RUN apt-get update && apt-get install -y \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3.10 python3-pip supervisor redis-server \
     libopus0 libx264-163 libx265-199 libvpx7 libnuma1 \
     libva2 libva-drm2 libaom3 libdav1d5 \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /tmp/*
 
 # Copy FFmpeg from build stage (only what we need)
 COPY --from=ffmpeg-build /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
@@ -77,8 +86,13 @@ WORKDIR /app
 # Install Python dependencies (backend + worker combined)
 COPY backend-api/requirements.txt /app/backend-requirements.txt
 COPY worker/requirements.txt /app/worker-requirements.txt
-RUN pip3 install --no-cache-dir -r /app/backend-requirements.txt -r /app/worker-requirements.txt && \
-    rm -rf ~/.cache/pip /root/.cache/pip /tmp/*
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --no-cache-dir -r /app/backend-requirements.txt -r /app/worker-requirements.txt && \
+    rm /app/backend-requirements.txt /app/worker-requirements.txt && \
+    # Remove pip cache and unnecessary files
+    find /usr/local/lib/python3.10 -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.10 -type f -name '*.pyc' -delete && \
+    find /usr/local/lib/python3.10 -type f -name '*.pyo' -delete
 
 # Copy application code
 COPY backend-api/app /app/backend

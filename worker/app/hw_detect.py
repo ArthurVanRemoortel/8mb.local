@@ -3,12 +3,20 @@ import os
 import subprocess
 from typing import Dict, Optional
 
+# Cache hardware detection result to avoid repeated subprocess calls
+_HW_CACHE: Optional[Dict] = None
+
 
 def detect_hw_accel() -> Dict[str, any]:
     """
     Detect available hardware acceleration.
     Returns dict with: type (nvidia/intel/amd/cpu), encoders available, etc.
+    Cached after first call.
     """
+    global _HW_CACHE
+    if _HW_CACHE is not None:
+        return _HW_CACHE
+    
     result = {
         "type": "cpu",
         "available_encoders": {},
@@ -26,6 +34,7 @@ def detect_hw_accel() -> Dict[str, any]:
             "hevc": "hevc_nvenc",
             "av1": "av1_nvenc",
         }
+        _HW_CACHE = result
         return result
     
     # Check for Intel QSV
@@ -42,6 +51,7 @@ def detect_hw_accel() -> Dict[str, any]:
             "hevc": "hevc_qsv",
             "av1": "av1_qsv",  # Available on Arc and newer
         }
+        _HW_CACHE = result
         return result
     
     if vaapi_info["available"]:
@@ -56,6 +66,7 @@ def detect_hw_accel() -> Dict[str, any]:
         # AV1 VAAPI support is newer, check if available
         if vaapi_info["av1_supported"]:
             result["available_encoders"]["av1"] = "av1_vaapi"
+        _HW_CACHE = result
         return result
     
     # CPU fallback
@@ -65,6 +76,7 @@ def detect_hw_accel() -> Dict[str, any]:
         "av1": "libaom-av1",  # widely available CPU AV1 encoder
     }
     
+    _HW_CACHE = result
     return result
 
 
