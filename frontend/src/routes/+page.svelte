@@ -1,7 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
-  import { uploadWithProgress, startCompress, openProgressStream, downloadUrl, getAvailableCodecs, getSystemCapabilities } from '$lib/api';
+  import { uploadWithProgress, startCompress, openProgressStream, downloadUrl, getAvailableCodecs, getSystemCapabilities, getPresetProfiles, getSizeButtons } from '$lib/api';
 
   let file: File | null = null;
   let uploadedFileName: string | null = null; // Track what file was uploaded
@@ -52,6 +52,13 @@
   let hardwareType = 'cpu';
   let sysCaps: any = null;
   let sysCapsError: string | null = null;
+  // Presets and size buttons
+  let presetProfiles: Array<any> = [];
+  let selectedPreset: string | null = null;
+  let sizeButtons: number[] = [4,5,8,9.7,50,100];
+  // Recent history
+  let history: any[] = [];
+  let historyEnabled = false;
 
   // Load default presets and available codecs on mount
   onMount(async () => {
@@ -98,7 +105,42 @@
     } catch (e:any) {
       sysCapsError = e?.message || 'Failed to fetch system capabilities';
     }
+
+    // Load preset profiles and size buttons
+    try {
+      const pp = await getPresetProfiles();
+      presetProfiles = pp.profiles || [];
+      selectedPreset = pp.default || (presetProfiles[0]?.name ?? null);
+      if (selectedPreset) applyPreset(selectedPreset);
+    } catch {}
+    try {
+      const sb = await getSizeButtons();
+      if (sb?.buttons?.length) sizeButtons = sb.buttons;
+    } catch {}
+
+    // Fetch recent history (best-effort)
+    try {
+      const res = await fetch('/api/history');
+      if (res.ok) {
+        const data = await res.json();
+        historyEnabled = !!data.enabled;
+        history = (data.entries || []).slice(0,5);
+      }
+    } catch {}
   });
+
+  function applyPreset(name: string){
+    const p = presetProfiles.find(x => x.name === name);
+    if (!p) return;
+    selectedPreset = name;
+    targetMB = p.target_mb;
+    videoCodec = p.video_codec;
+    audioCodec = p.audio_codec;
+    preset = p.preset;
+    audioKbps = p.audio_kbps;
+    container = p.container;
+    tune = p.tune;
+  }
 
   function buildCodecList(codecData: any): Array<{value: string, label: string, group: string}> {
     const list: Array<{value: string, label: string, group: string}> = [];
@@ -382,13 +424,10 @@
   </div>
 
   <div class="card grid grid-cols-2 gap-4">
-    <div class="space-x-2">
-      <button class="btn" on:click={()=>setPresetMB(4)}>4MB</button>
-      <button class="btn" on:click={()=>setPresetMB(5)}>5MB</button>
-      <button class="btn" on:click={()=>setPresetMB(8)}>8MB</button>
-      <button class="btn" on:click={setPresetMBSafe10}>10MB (Discord)</button>
-      <button class="btn" on:click={()=>setPresetMB(50)}>50MB</button>
-      <button class="btn" on:click={()=>setPresetMB(100)}>100MB</button>
+    <div class="space-x-2 flex flex-wrap gap-2">
+      {#each sizeButtons as b}
+        <button class="btn" on:click={()=>setPresetMB(b)}>{b}MB</button>
+      {/each}
     </div>
     <div class="flex items-center gap-2 justify-end">
       <label class="text-sm">Custom size (MB)</label>
@@ -400,6 +439,14 @@
     <details>
       <summary class="cursor-pointer">Advanced Options</summary>
       <div class="mt-4 grid sm:grid-cols-4 gap-4">
+        <div>
+          <label class="block mb-1 text-sm">Preset</label>
+          <select class="input w-full" bind:value={selectedPreset} on:change={(e:any)=>applyPreset(e.target.value)}>
+            {#each presetProfiles as p}
+              <option value={p.name}>{p.name}</option>
+            {/each}
+          </select>
+        </div>
         <div>
           <label class="block mb-1 text-sm">Video Codec</label>
           <select class="input w-full codec-select" bind:value={videoCodec}>
@@ -583,6 +630,28 @@
       {/if}
     </div>
   {/if}
+
+  <!-- Recent history on main screen -->
+  <div class="card">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-semibold">Recent History</h3>
+      <a href="/history" class="text-sm text-blue-400 underline">View all →</a>
+    </div>
+    {#if !historyEnabled}
+      <p class="text-sm opacity-70">History tracking is disabled. Enable it in Settings.</p>
+    {:else if history.length === 0}
+      <p class="text-sm opacity-70">No history yet.</p>
+    {:else}
+      <ul class="text-sm space-y-2">
+        {#each history as item}
+          <li class="flex items-center justify-between gap-2">
+            <span class="truncate">{item.filename}</span>
+            <span class="opacity-70">{item.compressed_size_mb.toFixed(2)} MB</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
 
   <!-- Support badge moved to corner (smaller, unobtrusive) -->
 </div>

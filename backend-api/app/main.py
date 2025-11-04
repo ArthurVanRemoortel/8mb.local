@@ -18,7 +18,7 @@ import psutil
 from .auth import basic_auth
 from .config import settings
 from .celery_app import celery_app
-from .models import UploadResponse, CompressRequest, StatusResponse, AuthSettings, AuthSettingsUpdate, PasswordChange, DefaultPresets, AvailableCodecsResponse, CodecVisibilitySettings
+from .models import UploadResponse, CompressRequest, StatusResponse, AuthSettings, AuthSettingsUpdate, PasswordChange, DefaultPresets, AvailableCodecsResponse, CodecVisibilitySettings, PresetProfile, PresetProfilesResponse, SetDefaultPresetRequest, SizeButtons, RetentionHours
 from .cleanup import start_scheduler
 from . import settings_manager
 from . import history_manager
@@ -390,6 +390,52 @@ async def update_default_presets(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Preset profiles CRUD
+@app.get("/api/settings/preset-profiles")
+async def get_preset_profiles() -> PresetProfilesResponse:
+    try:
+        data = settings_manager.get_preset_profiles()
+        return PresetProfilesResponse(**data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/settings/preset-profiles")
+async def add_preset_profile(profile: PresetProfile, _auth=Depends(basic_auth)):
+    try:
+        settings_manager.add_preset_profile(profile.dict())
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/settings/preset-profiles/{name}")
+async def update_preset_profile(name: str, updates: PresetProfile, _auth=Depends(basic_auth)):
+    try:
+        settings_manager.update_preset_profile(name, updates.dict())
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/settings/preset-profiles/{name}")
+async def delete_preset_profile(name: str, _auth=Depends(basic_auth)):
+    try:
+        settings_manager.delete_preset_profile(name)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.put("/api/settings/preset-profiles/default")
+async def set_default_preset(req: SetDefaultPresetRequest, _auth=Depends(basic_auth)):
+    try:
+        settings_manager.set_default_preset(req.name)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/api/settings/codecs")
 async def get_codec_visibility_settings() -> CodecVisibilitySettings:
     """Get codec visibility settings (no auth required)"""
@@ -467,6 +513,43 @@ async def startup_event():
     settings_manager.initialize_env_if_missing()
     # Start cleanup scheduler
     start_scheduler()
+
+
+# Size buttons settings
+@app.get("/api/settings/size-buttons")
+async def get_size_buttons() -> SizeButtons:
+    try:
+        buttons = settings_manager.get_size_buttons()
+        return SizeButtons(buttons=buttons)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/settings/size-buttons")
+async def update_size_buttons(size_buttons: SizeButtons, _auth=Depends(basic_auth)):
+    try:
+        settings_manager.update_size_buttons(size_buttons.buttons)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Retention settings
+@app.get("/api/settings/retention-hours")
+async def get_retention_hours() -> RetentionHours:
+    try:
+        return RetentionHours(hours=settings_manager.get_retention_hours())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/settings/retention-hours")
+async def update_retention_hours(req: RetentionHours, _auth=Depends(basic_auth)):
+    try:
+        settings_manager.update_retention_hours(req.hours)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # Serve pre-built frontend (for unified container deployment)

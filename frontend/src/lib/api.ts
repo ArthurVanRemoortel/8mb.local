@@ -84,3 +84,80 @@ export async function getSystemCapabilities() {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+// Settings APIs
+export async function getPresetProfiles() {
+  const res = await fetch(`${BACKEND}/api/settings/preset-profiles`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function setDefaultPreset(name: string) {
+  const res = await fetch(`${BACKEND}/api/settings/preset-profiles/default`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function addPresetProfile(profile: any) {
+  const res = await fetch(`${BACKEND}/api/settings/preset-profiles`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function updatePresetProfile(name: string, profile: any) {
+  const res = await fetch(`${BACKEND}/api/settings/preset-profiles/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deletePresetProfile(name: string) {
+  const res = await fetch(`${BACKEND}/api/settings/preset-profiles/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function getSizeButtons() {
+  const res = await fetch(`${BACKEND}/api/settings/size-buttons`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function updateSizeButtons(buttons: number[]) {
+  const res = await fetch(`${BACKEND}/api/settings/size-buttons`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ buttons }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function getRetentionHours() {
+  const res = await fetch(`${BACKEND}/api/settings/retention-hours`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function updateRetentionHours(hours: number) {
+  const res = await fetch(`${BACKEND}/api/settings/retention-hours`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hours }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
