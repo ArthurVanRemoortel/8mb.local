@@ -61,6 +61,20 @@ def _get_hw_info_cached() -> dict:
     return HW_INFO_CACHE
 
 
+def _get_hw_info_fresh(timeout: int = 10) -> dict:
+    """Force-refresh hardware info from worker, updating cache if successful."""
+    global HW_INFO_CACHE
+    try:
+        result = celery_app.send_task("worker.worker.get_hardware_info")
+        info = result.get(timeout=timeout) or {"type": "cpu", "available_encoders": {}}
+        # Update cache with fresh info
+        HW_INFO_CACHE = info
+        return info
+    except Exception:
+        # Return existing cache if present, else CPU fallback
+        return HW_INFO_CACHE or {"type": "cpu", "available_encoders": {}}
+
+
 def _ffprobe(input_path: Path) -> dict:
     cmd = [
         "ffprobe", "-v", "error",
@@ -184,7 +198,8 @@ async def _sync_codec_settings_from_tests(timeout_s: int = 60):
         deadline = time.time() + max(5, timeout_s)
         while time.time() < deadline:
             try:
-                hw_info = _get_hw_info_cached() or {}
+                # Force refresh to avoid stale CPU cache on early startup
+                hw_info = _get_hw_info_fresh(timeout=5) or {}
                 avail = hw_info.get("available_encoders", {}) or {}
                 if avail:  # Got concrete encoders like h264_nvenc, etc.
                     break
