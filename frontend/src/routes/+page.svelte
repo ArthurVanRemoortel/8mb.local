@@ -1,7 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
-  import { uploadWithProgress, startCompress, openProgressStream, downloadUrl, getAvailableCodecs, getSystemCapabilities, getPresetProfiles, getSizeButtons } from '$lib/api';
+  import { uploadWithProgress, startCompress, openProgressStream, downloadUrl, getAvailableCodecs, getSystemCapabilities, getPresetProfiles, getSizeButtons, cancelJob } from '$lib/api';
 
   let file: File | null = null;
   let uploadedFileName: string | null = null; // Track what file was uploaded
@@ -20,7 +20,7 @@
   let endTime: string = '';
   // New UI options
   let playSoundWhenDone = true; // default ON
-  let autoDownload = false;
+  let autoDownload = true;
   
   $: containerNote = (container === 'mp4' && audioCodec === 'libopus') ? 'MP4 does not support Opus; audio will be encoded as AAC automatically.' : null;
   $: estimated = jobInfo ? {
@@ -41,6 +41,7 @@
   let errorText: string | null = null;
   let isUploading = false;
   let uploadProgress = 0;
+  let isCancelling = false;
   // Support widget state
   let showSupport = false;
   function toggleSupport(){ showSupport = !showSupport; }
@@ -68,6 +69,8 @@
       if (ps !== null) playSoundWhenDone = (ps === 'true');
       const ad = localStorage.getItem('autoDownload');
       if (ad !== null) autoDownload = (ad === 'true');
+      // If not present in localStorage, default to true and set it
+      if (ad === null) localStorage.setItem('autoDownload', 'true');
     } catch {}
     try {
       const res = await fetch('/api/settings/presets');
@@ -88,7 +91,8 @@
     // Load available codecs
     try {
       const codecData = await getAvailableCodecs();
-      hardwareType = codecData.hardware_type;
+      // Tentatively set hardware based on worker-reported type; we'll refine after sysCaps
+      hardwareType = codecData.hardware_type || 'cpu';
       availableCodecs = buildCodecList(codecData);
     } catch (err) {
       console.warn('Failed to load available codecs, using fallback');
@@ -102,6 +106,15 @@
     // Load system capabilities (CPU, memory, GPUs)
     try {
       sysCaps = await getSystemCapabilities();
+      // Prefer the system capabilities' hardware view (backend includes worker.hw under sysCaps.hardware)
+      const hw = sysCaps?.hardware?.type;
+      // If NVIDIA driver present and GPUs listed, force NVIDIA for UI clarity
+      const hasNvidia = !!sysCaps?.nvidia_driver && Array.isArray(sysCaps?.gpus) && sysCaps.gpus.length > 0;
+      if (hasNvidia) {
+        hardwareType = 'nvidia';
+      } else if (hw) {
+        hardwareType = hw;
+      }
     } catch (e:any) {
       sysCapsError = e?.message || 'Failed to fetch system capabilities';
     }
@@ -134,7 +147,7 @@
     if (!p) return;
     selectedPreset = name;
     targetMB = p.target_mb;
-    videoCodec = p.video_codec;
+    // Do NOT override codec; keep codec selection independent
     audioCodec = p.audio_codec;
     preset = p.preset;
     audioKbps = p.audio_kbps;
@@ -283,11 +296,18 @@
         try { const data = JSON.parse(ev.data);
           if (data.type === 'progress') { progress = data.progress; }
           if (data.type === 'log' && data.message) { logLines = [data.message, ...logLines].slice(0, 500); }
+          if (data.type === 'canceled') {
+            isCompressing = false;
+            errorText = 'Job canceled';
+          }
           if (data.type === 'done') { 
             doneStats = data.stats; 
             progress = 100;
             isCompressing = false;
             try { esRef?.close(); } catch {}
+          } else if (data.type === 'canceled') {
+            isCompressing = false;
+            errorText = 'Job canceled';
             
             // Play sound when done if enabled
             if (playSoundWhenDone) {
@@ -296,9 +316,9 @@
             }
             
             // Auto-download if enabled
-            if (autoDownload && doneStats?.output_filename) {
+            if (autoDownload && taskId) {
               setTimeout(() => {
-                window.location.href = downloadUrl(doneStats.output_filename);
+                window.location.href = downloadUrl(taskId!);
               }, 500);
             }
           }
@@ -339,9 +359,9 @@
             audio.play().catch(() => {});
           }
           // Auto-download if enabled
-          if (autoDownload && doneStats?.output_filename) {
+          if (autoDownload && taskId) {
             setTimeout(() => {
-              window.location.href = downloadUrl(doneStats.output_filename);
+              window.location.href = downloadUrl(taskId!);
             }, 500);
           }
         }
@@ -357,6 +377,19 @@
   }
 
   function reset(){ file=null; uploadedFileName=null; jobInfo=null; taskId=null; progress=0; logLines=[]; doneStats=null; warnText=null; errorText=null; isUploading=false; isCompressing=false; try { esRef?.close(); } catch {} }
+
+  async function onCancel(){
+    if (!taskId || isCancelling) return;
+    isCancelling = true;
+    try {
+      await cancelJob(taskId);
+      logLines = ['Cancellation requested…', ...logLines].slice(0, 500);
+    } catch (e:any) {
+      errorText = e?.message || 'Failed to cancel';
+    } finally {
+      isCancelling = false;
+    }
+  }
 
   // Persist UI preferences
   $: (() => { try { localStorage.setItem('playSoundWhenDone', String(playSoundWhenDone)); } catch {} })();
@@ -435,61 +468,59 @@
     </div>
   </div>
 
+  <!-- Primary controls: Codec and Speed/Quality preset (visible without expanding) -->
+  <div class="card grid sm:grid-cols-3 gap-4">
+    <div>
+      <label class="block mb-1 text-sm">Video Codec</label>
+      <select class="input w-full codec-select" bind:value={videoCodec}>
+        {#each availableCodecs as codec}
+          <option value={codec.value} data-group={codec.group}>
+            {getCodecIcon(codec.group)} {codec.label}
+          </option>
+        {/each}
+      </select>
+      {#if hardwareType !== 'cpu'}
+        <p class="text-xs text-gray-400 mt-1">
+          <span class="inline-block w-2 h-2 rounded-full mr-1" style="background-color: {getCodecColor(hardwareType)}"></span>
+          Detected: {hardwareType.toUpperCase()} acceleration
+        </p>
+      {:else}
+        <p class="text-xs text-gray-400 mt-1">
+          <span class="inline-block w-2 h-2 rounded-full bg-gray-500 mr-1"></span>
+          CPU encoding (no GPU detected)
+        </p>
+      {/if}
+    </div>
+    <div>
+      <label class="block mb-1 text-sm">Speed/Quality</label>
+      <select class="input w-full" bind:value={preset}>
+        <option value="p1">Fast (P1)</option>
+        <option value="p5">Balanced (P5)</option>
+        <option value="p7">Best Quality (P7)</option>
+        <option value="p6">Default (P6)</option>
+        <option value="extraquality">🌟 Extra Quality (Slowest)</option>
+      </select>
+    </div>
+    <div>
+      <label class="block mb-1 text-sm">Profile</label>
+      <select class="input w-full" bind:value={selectedPreset} on:change={(e:any)=>applyPreset(e.target.value)}>
+        {#each presetProfiles as p}
+          <option value={p.name}>{p.name}</option>
+        {/each}
+      </select>
+    </div>
+  </div>
+
   <div class="card">
     <details>
       <summary class="cursor-pointer">Advanced Options</summary>
       <div class="mt-4 grid sm:grid-cols-4 gap-4">
-        <div>
-          <label class="block mb-1 text-sm">Preset</label>
-          <select class="input w-full" bind:value={selectedPreset} on:change={(e:any)=>applyPreset(e.target.value)}>
-            {#each presetProfiles as p}
-              <option value={p.name}>{p.name}</option>
-            {/each}
-          </select>
-        </div>
-        <div>
-          <label class="block mb-1 text-sm">Video Codec</label>
-          <select class="input w-full codec-select" bind:value={videoCodec}>
-            {#each availableCodecs as codec}
-              <option value={codec.value} data-group={codec.group}>
-                {getCodecIcon(codec.group)} {codec.label}
-              </option>
-            {/each}
-          </select>
-          {#if hardwareType !== 'cpu'}
-            <p class="text-xs text-gray-400 mt-1">
-              <span class="inline-block w-2 h-2 rounded-full mr-1" style="background-color: {getCodecColor(hardwareType)}"></span>
-              Detected: {hardwareType.toUpperCase()} acceleration
-            </p>
-          {:else}
-            <p class="text-xs text-gray-400 mt-1">
-              <span class="inline-block w-2 h-2 rounded-full bg-gray-500 mr-1"></span>
-              CPU encoding (no GPU detected)
-            </p>
-          {/if}
-          <div class="mt-2 text-[10px] space-y-0.5 opacity-75">
-            <div><span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span> Green = NVIDIA GPU</div>
-            <div><span class="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1"></span> Blue = Intel GPU</div>
-            <div><span class="inline-block w-2 h-2 rounded-full bg-orange-500 mr-1"></span> Orange = AMD GPU</div>
-            <div><span class="inline-block w-2 h-2 rounded-full bg-gray-500 mr-1"></span> Gray = CPU (slower)</div>
-          </div>
-        </div>
         <div>
           <label class="block mb-1 text-sm">Audio Codec</label>
           <select class="input w-full" bind:value={audioCodec}>
             <option value="libopus">Opus (Default)</option>
             <option value="aac">AAC</option>
             <option value="none">🔇 None (Mute)</option>
-          </select>
-        </div>
-        <div>
-          <label class="block mb-1 text-sm">Speed/Quality</label>
-          <select class="input w-full" bind:value={preset}>
-            <option value="p1">Fast (P1)</option>
-            <option value="p5">Balanced (P5)</option>
-            <option value="p7">Best Quality (P7)</option>
-            <option value="p6">Default (P6)</option>
-            <option value="extraquality">🌟 Extra Quality (Slowest)</option>
           </select>
         </div>
         <div>
@@ -605,6 +636,9 @@
       {isUploading ? `Uploading… ${uploadProgress}%` : 'Analyze'}
     </button>
     <button class="btn" on:click={doCompress} disabled={!jobInfo}>Compress</button>
+    {#if taskId && isCompressing}
+      <button class="btn" on:click={onCancel} disabled={isCancelling}>{isCancelling ? 'Canceling…' : 'Cancel'}</button>
+    {/if}
     <button class="btn" on:click={reset} disabled={!file && !taskId}>Reset</button>
   </div>
 
@@ -692,9 +726,10 @@
 {/if}
 
 {#if isUploading || isCompressing}
-  <div class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-center justify-center">
-    <div class="bg-gray-900 border border-gray-700 rounded-lg p-4 shadow-xl flex items-center gap-3">
-      <div class="h-6 w-6 rounded-full border-2 border-gray-600 border-t-indigo-500 animate-spin"></div>
+  <!-- Non-blocking mini status panel in bottom-right -->
+  <div class="fixed bottom-4 right-4 z-40 pointer-events-none">
+    <div class="pointer-events-auto bg-gray-900/95 border border-gray-700 rounded-lg p-3 shadow-xl flex items-center gap-3">
+      <div class="h-5 w-5 rounded-full border-2 border-gray-600 border-t-indigo-500 animate-spin"></div>
       <div class="text-sm">
         {#if isUploading}
           <div>Uploading… {uploadProgress}%</div>

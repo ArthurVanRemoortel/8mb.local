@@ -26,6 +26,14 @@ def _publish(task_id: str, event: Dict):
     _redis().publish(f"progress:{task_id}", json.dumps(event))
 
 
+def _is_cancelled(task_id: str) -> bool:
+    try:
+        val = _redis().get(f"cancel:{task_id}")
+        return str(val) == '1'
+    except Exception:
+        return False
+
+
 @celery_app.task(name="worker.worker.get_hardware_info")
 def get_hardware_info_task():
     """Return hardware acceleration info for the frontend."""
@@ -330,13 +338,30 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
     cmd_str = ' '.join(cmd)
     _publish(self.request.id, {"type": "log", "message": f"FFmpeg command: {cmd_str}"})
 
-    def run_ffmpeg_and_stream(command: list) -> int:
+    def run_ffmpeg_and_stream(command: list) -> tuple[int, bool]:
         proc_i = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, bufsize=1)
         local_stderr = []
         nonlocal last_progress
+        cancelled = False
         try:
             assert proc_i.stderr is not None
             for line in proc_i.stderr:
+                # Check for cancellation between lines
+                if _is_cancelled(self.request.id):
+                    cancelled = True
+                    _publish(self.request.id, {"type": "log", "message": "Cancel received, stopping encoder..."})
+                    try:
+                        proc_i.terminate()
+                    except Exception:
+                        pass
+                    try:
+                        proc_i.wait(timeout=3)
+                    except Exception:
+                        try:
+                            proc_i.kill()
+                        except Exception:
+                            pass
+                    break
                 line = line.strip()
                 if not line:
                     continue
@@ -357,15 +382,22 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
                         _publish(self.request.id, {"type": "log", "message": f"{key}={val}"})
                 else:
                     _publish(self.request.id, {"type": "log", "message": line})
-            proc_i.wait()
-            return proc_i.returncode or 0
+            if not cancelled:
+                proc_i.wait()
+            return (proc_i.returncode or 0, cancelled)
         finally:
             stderr_lines.extend(local_stderr)
 
     # Start process and optionally fall back to CPU on failure
     last_progress = 0.0
     stderr_lines: list[str] = []
-    rc = run_ffmpeg_and_stream(cmd)
+    rc, was_cancelled = run_ffmpeg_and_stream(cmd)
+
+    if was_cancelled:
+        _publish(self.request.id, {"type": "canceled"})
+        msg = "Job canceled by user"
+        _publish(self.request.id, {"type": "error", "message": msg})
+        raise RuntimeError(msg)
 
     if rc != 0 and (actual_encoder.endswith("_nvenc") or actual_encoder.endswith("_qsv") or actual_encoder.endswith("_vaapi") or actual_encoder.endswith("_amf")):
         _publish(self.request.id, {"type": "log", "message": f"Hardware encode failed (rc={rc}). Retrying on CPU..."})
@@ -408,7 +440,13 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
             cmd2 += ["-c:a", chosen_audio_codec, "-b:a", a_bitrate_str]
         cmd2 += [*mp4_flags, "-progress", "pipe:2", output_path]
 
-        rc = run_ffmpeg_and_stream(cmd2)
+        rc, was_cancelled = run_ffmpeg_and_stream(cmd2)
+
+    if was_cancelled:
+        _publish(self.request.id, {"type": "canceled"})
+        msg = "Job canceled by user"
+        _publish(self.request.id, {"type": "error", "message": msg})
+        raise RuntimeError(msg)
 
     if rc != 0:
         recent_stderr = '\n'.join(stderr_lines[-20:]) if stderr_lines else 'No stderr output'
@@ -434,7 +472,8 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
     
     # Add to history if enabled
     try:
-        history_enabled = os.getenv('HISTORY_ENABLED', 'false').lower() in ('true', '1', 'yes')
+        # Default ON if variable not set
+        history_enabled = os.getenv('HISTORY_ENABLED', 'true').lower() in ('true', '1', 'yes')
         if history_enabled:
             # Import here to avoid circular dependency
             import sys

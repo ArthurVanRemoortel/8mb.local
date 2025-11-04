@@ -50,6 +50,26 @@ def _ensure_defaults() -> Dict[str, Any]:
             {"name":"H264 25MB Fast", "target_mb":25, "video_codec":"h264_nvenc", "audio_codec":"aac", "preset":"p3", "audio_kbps":128, "container":"mp4", "tune":"ll"}
         ]
         changed = True
+    # Ensure an AV1 NVENC profile exists even if preset_profiles already seeded earlier
+    try:
+        profiles = data.get('preset_profiles', [])
+        has_av1_nvenc = any(p.get('video_codec') == 'av1_nvenc' for p in profiles)
+        if not has_av1_nvenc:
+            # Add a sensible default AV1 NVENC profile
+            profiles.append({
+                "name": "AV1 9.7MB (NVENC)",
+                "target_mb": 9.7,
+                "video_codec": "av1_nvenc",
+                "audio_codec": "aac",
+                "preset": "p6",
+                "audio_kbps": 128,
+                "container": "mp4",
+                "tune": "hq"
+            })
+            data['preset_profiles'] = profiles
+            changed = True
+    except Exception:
+        pass
     if 'default_preset' not in data:
         data['default_preset'] = 'H265 9.7MB (NVENC)'
         changed = True
@@ -144,7 +164,8 @@ def update_auth_settings(auth_enabled: bool, auth_user: Optional[str] = None, au
     env_vars.setdefault('REDIS_URL', 'redis://127.0.0.1:6379/0')
     env_vars.setdefault('BACKEND_HOST', '0.0.0.0')
     env_vars.setdefault('BACKEND_PORT', '8000')
-    env_vars.setdefault('HISTORY_ENABLED', 'false')
+    # Enable history by default
+    env_vars.setdefault('HISTORY_ENABLED', 'true')
     
     write_env_file(env_vars)
     
@@ -171,7 +192,9 @@ def initialize_env_if_missing():
             'FILE_RETENTION_HOURS': '1',
             'REDIS_URL': 'redis://127.0.0.1:6379/0',
             'BACKEND_HOST': '0.0.0.0',
-            'BACKEND_PORT': '8000'
+            'BACKEND_PORT': '8000',
+            # History on by default
+            'HISTORY_ENABLED': 'true'
         }
         write_env_file(default_env)
 
@@ -304,7 +327,8 @@ def update_codec_visibility_settings(settings: dict):
 def get_history_enabled() -> bool:
     """Get history enabled setting"""
     env_vars = read_env_file()
-    history_enabled = os.getenv('HISTORY_ENABLED', env_vars.get('HISTORY_ENABLED', 'false'))
+    # Default ON if not set
+    history_enabled = os.getenv('HISTORY_ENABLED', env_vars.get('HISTORY_ENABLED', 'true'))
     return history_enabled.lower() in ('true', '1', 'yes')
 
 

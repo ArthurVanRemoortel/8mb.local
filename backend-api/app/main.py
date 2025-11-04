@@ -38,6 +38,23 @@ app.add_middleware(
 
 redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
+# Cache for one-time hardware detection and system capabilities
+HW_INFO_CACHE: dict | None = None
+SYSTEM_CAPS_CACHE: dict | None = None
+
+
+def _get_hw_info_cached() -> dict:
+    """Get hardware info from cache or compute once via worker."""
+    global HW_INFO_CACHE
+    if HW_INFO_CACHE is not None:
+        return HW_INFO_CACHE
+    try:
+        result = celery_app.send_task("worker.worker.get_hardware_info")
+        HW_INFO_CACHE = result.get(timeout=5) or {"type": "cpu", "available_encoders": {}}
+    except Exception:
+        HW_INFO_CACHE = {"type": "cpu", "available_encoders": {}}
+    return HW_INFO_CACHE
+
 
 def _ffprobe(input_path: Path) -> dict:
     cmd = [
@@ -100,7 +117,7 @@ def _get_system_capabilities() -> dict:
     except Exception:
         pass
 
-    # NVIDIA GPUs via nvidia-smi (if available)
+    # NVIDIA GPUs via nvidia-smi (if available) - run once by caller that caches
     try:
         q = "index,name,memory.total,memory.used,driver_version,uuid"
         res = subprocess.run(
@@ -205,6 +222,24 @@ async def download(task_id: str):
     return FileResponse(path, filename=filename, media_type=media_type)
 
 
+@app.post("/api/jobs/{task_id}/cancel")
+async def cancel_job(task_id: str):
+    """Signal a running job to cancel and attempt to stop ffmpeg."""
+    try:
+        # Set a short-lived cancel flag the worker checks
+        await redis.set(f"cancel:{task_id}", "1", ex=3600)
+        # Notify listeners via SSE channel immediately
+        await redis.publish(f"progress:{task_id}", orjson.dumps({"type":"log","message":"Cancellation requested"}).decode())
+        # Best-effort: also ask Celery to revoke/terminate (in case worker is stuck)
+        try:
+            celery_app.control.revoke(task_id, terminate=True)
+        except Exception:
+            pass
+        return {"status": "cancellation_requested"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def _sse_event_generator(task_id: str) -> AsyncGenerator[bytes, None]:
     channel = f"progress:{task_id}"
     pubsub = redis.pubsub()
@@ -233,34 +268,17 @@ async def health():
 @app.get("/api/hardware")
 async def get_hardware_info():
     """Get available hardware acceleration info from worker."""
-    try:
-        # Query worker for hardware capabilities
-        # This is a lightweight check via a Celery task
-        from .celery_app import celery_app
-        result = celery_app.send_task("worker.worker.get_hardware_info")
-        hw_info = result.get(timeout=5)
-        return hw_info
-    except Exception as e:
-        # Fallback to CPU-only if worker unavailable
-        return {
-            "type": "cpu",
-            "available_encoders": {
-                "h264": "libx264",
-                "hevc": "libx265",
-                "av1": "libaom-av1"
-            }
-        }
+    # Serve cached hardware info (computed once)
+    return _get_hw_info_cached()
 
 
 @app.get("/api/codecs/available")
 async def get_available_codecs() -> AvailableCodecsResponse:
     """Get available codecs based on hardware detection and user settings."""
     try:
-        # Get hardware info from worker
-        from .celery_app import celery_app
-        result = celery_app.send_task("worker.worker.get_hardware_info")
-        hw_info = result.get(timeout=5)
-        
+        # Use cached hardware info
+        hw_info = _get_hw_info_cached()
+
         # Get user codec visibility settings
         codec_settings = settings_manager.get_codec_visibility_settings()
         
@@ -302,15 +320,12 @@ async def get_available_codecs() -> AvailableCodecsResponse:
 @app.get("/api/system/capabilities")
 async def system_capabilities():
     """Return detailed system capabilities including CPU, memory, GPUs and worker HW type."""
-    caps = _get_system_capabilities()
-    # Also include hardware acceleration type from worker
-    try:
-        result = celery_app.send_task("worker.worker.get_hardware_info")
-        hw_info = result.get(timeout=5)
-    except Exception:
-        hw_info = {"type": "cpu", "available_encoders": {}}
-    caps["hardware"] = hw_info
-    return caps
+    global SYSTEM_CAPS_CACHE
+    if SYSTEM_CAPS_CACHE is None:
+        caps = _get_system_capabilities()
+        caps["hardware"] = _get_hw_info_cached()
+        SYSTEM_CAPS_CACHE = caps
+    return SYSTEM_CAPS_CACHE
 
 
 # Settings management endpoints
@@ -513,6 +528,13 @@ async def startup_event():
     settings_manager.initialize_env_if_missing()
     # Start cleanup scheduler
     start_scheduler()
+    # Initialize hardware and system capabilities cache once
+    try:
+        _ = _get_hw_info_cached()
+        # Warm system capabilities cache
+        _ = system_capabilities  # function ref to avoid linter warning
+    except Exception:
+        pass
 
 
 # Size buttons settings

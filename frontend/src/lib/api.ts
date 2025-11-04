@@ -73,6 +73,12 @@ export function downloadUrl(taskId: string) {
   return `${BACKEND}/api/jobs/${taskId}/download`;
 }
 
+export async function cancelJob(taskId: string) {
+  const res = await fetch(`${BACKEND}/api/jobs/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function getAvailableCodecs() {
   const res = await fetch(`${BACKEND}/api/codecs/available`);
   if (!res.ok) throw new Error(await res.text());
