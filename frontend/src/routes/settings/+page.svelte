@@ -31,6 +31,8 @@
   let error = '';
 	// History toggle
 	let historyEnabled = false;
+	// Startup banner
+	let showCodecSyncBanner = false;
 
   // Auth
   let authEnabled = false;
@@ -71,9 +73,9 @@
 	let newPresetName: string = '';
 	let retentionHours: number = 1;
 
-	onMount(async () => {
+	  onMount(async () => {
 	try {
-	  const [authRes, presetsRes, codecsRes, historyRes] = await Promise.all([
+		  const [authRes, presetsRes, codecsRes, historyRes] = await Promise.all([
 		fetch('/api/settings/auth'),
 		fetch('/api/settings/presets'),
 		fetch('/api/settings/codecs'),
@@ -115,6 +117,21 @@
 		const rh = await fetch('/api/settings/retention-hours');
 		if (rh.ok) { const js = await rh.json(); retentionHours = js.hours ?? 1; }
 	  } catch {}
+
+      // Startup info for first-boot banner
+      try {
+        const si = await fetch('/api/startup/info');
+        if (si.ok) {
+          const js = await si.json();
+          const bootId = js.boot_id as string | null;
+          const synced = !!js.codec_visibility_synced;
+          const key = '8mblocal:lastSeenBootId';
+          const lastSeen = window.localStorage.getItem(key);
+          if (synced && bootId && bootId !== lastSeen) {
+            showCodecSyncBanner = true;
+          }
+        }
+      } catch {}
 	} catch (e) {
 	  error = 'Failed to load settings';
 	}
@@ -305,6 +322,8 @@
   .msg.err { background: rgba(239,68,68,.15); border: 1px solid #ef4444; color: #fecaca; }
   .switch { display:flex; align-items:center; gap:8px; }
   .switch input { transform: scale(1.2); }
+	.banner { display:flex; justify-content:space-between; align-items:center; gap:12px; background: rgba(59,130,246,.12); border:1px solid #3b82f6; color:#bfdbfe; padding:10px 12px; border-radius:8px; margin-bottom:12px; }
+	.banner button { background: transparent; border: none; color:#93c5fd; cursor:pointer; font-size:14px; }
 </style>
 
 <div class="container">
@@ -312,6 +331,13 @@
 	<h1 class="title" style="font-size:24px">Settings</h1>
 	<a href="/" class="btn" style="text-decoration:none; background:#374151">← Back</a>
   </div>
+
+	{#if showCodecSyncBanner}
+		<div class="banner">
+			<div>Codec visibility synced from hardware tests</div>
+			<button on:click={() => { try { const siPromise = fetch('/api/startup/info').then(r=>r.ok?r.json():null); siPromise.then(js => { const bootId = js?.boot_id; if (bootId) { window.localStorage.setItem('8mblocal:lastSeenBootId', bootId); } }); } catch {} showCodecSyncBanner = false; }}>Dismiss</button>
+		</div>
+	{/if}
 
   {#if message}<div class="msg ok">{message}</div>{/if}
   {#if error}<div class="msg err">{error}</div>{/if}

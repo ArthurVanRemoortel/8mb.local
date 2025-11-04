@@ -156,6 +156,13 @@ async def on_startup():
     start_scheduler()
     # Kick off background sync to apply codec visibility settings from worker startup tests
     try:
+        # Record a new boot id on each API start so the UI can detect "first boot"
+        boot_id = str(uuid.uuid4())
+        try:
+            await redis.set("startup:boot_id", boot_id)
+            await redis.set("startup:boot_ts", str(int(time.time())))
+        except Exception:
+            pass
         asyncio.create_task(_sync_codec_settings_from_tests())
     except Exception:
         pass
@@ -189,6 +196,11 @@ async def _sync_codec_settings_from_tests(timeout_s: int = 60):
         await asyncio.sleep(1)
 
     if not seen_any:
+        # Mark that no sync occurred (for UI awareness)
+        try:
+            await redis.set("startup:codec_visibility_synced", "0")
+        except Exception:
+            pass
         return
 
     # Build settings payload: enable only codecs with "1"; always keep CPU codecs enabled
@@ -215,14 +227,24 @@ async def _sync_codec_settings_from_tests(timeout_s: int = 60):
         from . import settings_manager as _sm
         _sm.update_codec_visibility_settings(payload)
         logger.info("Applied codec visibility from startup tests: %s", ', '.join([k for k, v in payload.items() if v]))
+        # Flag for UI banner: synced from hardware tests
+        try:
+            await redis.set("startup:codec_visibility_synced", "1")
+            await redis.set("startup:codec_visibility_synced_at", str(int(time.time())))
+        except Exception:
+            pass
     except Exception as e:
         logger.warning(f"Failed to apply codec visibility from tests: {e}")
+        try:
+            await redis.set("startup:codec_visibility_synced", "0")
+        except Exception:
+            pass
 
 
 @app.post("/api/upload", response_model=UploadResponse, dependencies=[Depends(basic_auth)])
 async def upload(file: UploadFile = File(...), target_size_mb: float = 25.0, audio_bitrate_kbps: int = 128):
-    # File size limit to prevent OOM (default 5GB)
-    MAX_FILE_SIZE = int(os.getenv("MAX_UPLOAD_SIZE_MB", "5120")) * 1024 * 1024
+    # File size limit to prevent OOM (default 50GB)
+    MAX_FILE_SIZE = int(os.getenv("MAX_UPLOAD_SIZE_MB", "51200")) * 1024 * 1024
     
     job_id = str(uuid.uuid4())
     dest = UPLOADS_DIR / f"{job_id}_{file.filename}"
@@ -250,6 +272,30 @@ async def upload(file: UploadFile = File(...), target_size_mb: float = 25.0, aud
         estimate_video_kbps=video_kbps,
         warn_low_quality=warn,
     )
+
+
+@app.get("/api/startup/info")
+async def startup_info():
+    """Expose container boot id and codec sync status for lightweight UI banners."""
+    try:
+        boot_id = await redis.get("startup:boot_id")
+        boot_ts = await redis.get("startup:boot_ts")
+        synced = await redis.get("startup:codec_visibility_synced")
+        synced_at = await redis.get("startup:codec_visibility_synced_at")
+        return {
+            "boot_id": boot_id,
+            "boot_ts": int(boot_ts) if boot_ts else None,
+            "codec_visibility_synced": (synced == "1"),
+            "codec_visibility_synced_at": int(synced_at) if synced_at else None,
+        }
+    except Exception:
+        # Best-effort fallback
+        return {
+            "boot_id": None,
+            "boot_ts": None,
+            "codec_visibility_synced": False,
+            "codec_visibility_synced_at": None,
+        }
 
 
 @app.post("/api/compress", dependencies=[Depends(basic_auth)])
