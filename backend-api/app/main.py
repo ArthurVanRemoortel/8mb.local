@@ -154,6 +154,69 @@ async def on_startup():
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     start_scheduler()
+    # Kick off background sync to apply codec visibility settings from worker startup tests
+    try:
+        asyncio.create_task(_sync_codec_settings_from_tests())
+    except Exception:
+        pass
+
+
+async def _sync_codec_settings_from_tests(timeout_s: int = 60):
+    """Poll Redis for worker encoder test results and update codec visibility settings.
+
+    Goal: Only enable codecs that passed startup validation so the Settings UI
+    reflects actual support as soon as the container starts.
+    """
+    all_codecs = [
+        'h264_nvenc','hevc_nvenc','av1_nvenc',
+        'h264_qsv','hevc_qsv','av1_qsv',
+        'h264_vaapi','hevc_vaapi','av1_vaapi',
+        'h264_amf','hevc_amf','av1_amf',
+        'libx264','libx265','libaom-av1'
+    ]
+    # Poll until we see at least one encoder_test key or we time out
+    deadline = time.time() + max(1, timeout_s)
+    seen_any = False
+    while time.time() < deadline:
+        try:
+            values = await asyncio.gather(*[redis.get(f"encoder_test:{c}") for c in all_codecs])
+            if any(v is not None for v in values):
+                seen_any = True
+                break
+        except Exception:
+            # Redis may not be ready yet
+            pass
+        await asyncio.sleep(1)
+
+    if not seen_any:
+        return
+
+    # Build settings payload: enable only codecs with "1"; always keep CPU codecs enabled
+    payload: dict[str, bool] = {}
+    try:
+        results = {}
+        for c in all_codecs:
+            try:
+                v = await redis.get(f"encoder_test:{c}")
+                results[c] = (v == '1') if v is not None else False
+            except Exception:
+                results[c] = False
+        # CPU codecs should default to True even if not tested
+        results['libx264'] = True
+        results['libx265'] = True
+        results['libaom-av1'] = True
+
+        # Map to settings keys and apply
+        for c in all_codecs:
+            key = c.replace('-', '_')  # libaom-av1 -> libaom_av1
+            payload[key] = bool(results.get(c, False))
+
+        # Persist to .env via settings manager (handles write failures gracefully)
+        from . import settings_manager as _sm
+        _sm.update_codec_visibility_settings(payload)
+        logger.info("Applied codec visibility from startup tests: %s", ', '.join([k for k, v in payload.items() if v]))
+    except Exception as e:
+        logger.warning(f"Failed to apply codec visibility from tests: {e}")
 
 
 @app.post("/api/upload", response_model=UploadResponse, dependencies=[Depends(basic_auth)])
