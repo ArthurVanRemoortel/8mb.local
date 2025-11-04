@@ -5,6 +5,7 @@
 
   let file: File | null = null;
   let uploadedFileName: string | null = null; // Track what file was uploaded
+  let isAnalyzing: boolean = false; // Track analysis state for UI feedback
   let targetMB = 25;
   let videoCodec: string = 'av1_nvenc';
   let audioCodec: 'libopus' | 'aac' | 'none' = 'libopus';
@@ -15,8 +16,8 @@
   let tune: 'hq'|'ll'|'ull'|'lossless' = 'hq';
   // Decoder preference
   let preferHwDecode: boolean = true; // Prefer hardware decoding when available
-  // MP4 finalize preference
-  let fastMp4Finalize: boolean = false;
+  // MP4 finalize preference - DEFAULT TO TRUE for better UX
+  let fastMp4Finalize: boolean = true;
   // New resolution and trim controls
   let maxWidth: number | null = null;
   let maxHeight: number | null = null;
@@ -36,6 +37,25 @@
   } : null;
   // Update warning dynamically based on current estimate (no need to re-upload)
   $: warnText = estimated && estimated.video_kbps < 100 ? `Warning: Very low video bitrate (${Math.round(estimated.video_kbps)} kbps)` : null;
+  
+  // Auto-analyze when target size or audio bitrate changes (if file exists and was already analyzed)
+  $: if (file && jobInfo && (targetMB || audioKbps)) {
+    // Trigger re-analysis on these settings changes
+    const shouldReanalyze = uploadedFileName === file.name;
+    if (shouldReanalyze) {
+      // Debounce: clear existing timer and set new one
+      if (typeof window !== 'undefined') {
+        clearTimeout((window as any).__analyzeTimer);
+        (window as any).__analyzeTimer = setTimeout(() => {
+          if (file && !isUploading && !isAnalyzing) {
+            console.log('Settings changed, re-analyzing...');
+            uploadedFileName = null; // Force re-upload
+            doUpload();
+          }
+        }, 500);
+      }
+    }
+  }
 
   let jobInfo: any = null;
   let taskId: string | null = null;
@@ -183,9 +203,9 @@
       { value: 'hevc_vaapi', label: 'HEVC (H.265, VAAPI)', group: 'vaapi' },
       { value: 'h264_vaapi', label: 'H.264 (VAAPI)', group: 'vaapi' },
       // AMD AMF
-      { value: 'av1_amf', label: 'AV1 (AMD)', group: 'amd' },
-      { value: 'hevc_amf', label: 'HEVC (H.265, AMD)', group: 'amd' },
-      { value: 'h264_amf', label: 'H.264 (AMD)', group: 'amd' },
+      { value: 'av1_amf', label: 'AV1 (AMD AMF)', group: 'amd' },
+      { value: 'hevc_amf', label: 'HEVC (H.265, AMD AMF)', group: 'amd' },
+      { value: 'h264_amf', label: 'H.264 (AMD AMF)', group: 'amd' },
       // CPU
       { value: 'libaom-av1', label: 'AV1 (CPU - Highest Quality)', group: 'cpu' },
       { value: 'libx265', label: 'HEVC (H.265, CPU)', group: 'cpu' },
@@ -256,34 +276,37 @@
     if (f) {
       file = f;
       fileSizeLabel = formatSize(f.size);
-      // Do not auto-upload on drop; require explicit Analyze click
+      // Auto-analyze on drop
+      setTimeout(() => doUpload(), 100);
     }
   }
   function allowDrop(e: DragEvent){ e.preventDefault(); }
 
   async function doUpload(){
     if (!file) return;
-    if (isUploading) return;
+    if (isUploading || isAnalyzing) return;
     // Skip re-upload when same file is already uploaded; recompute client-side estimates only
     if (uploadedFileName === file.name && jobInfo?.filename) {
       warnText = (estimated && estimated.video_kbps < 100) ? `Warning: Very low video bitrate (${Math.round(estimated.video_kbps)} kbps)` : null;
       return;
     }
+    isAnalyzing = true;
     isUploading = true;
     uploadProgress = 0;
     errorText = null;
     try {
-      console.log('Uploading to backend...', file.name);
+      console.log('Analyzing file...', file.name);
       jobInfo = await uploadWithProgress(file, targetMB, audioKbps, { onProgress: (p:number)=>{ uploadProgress = p; } });
-      console.log('Upload response:', jobInfo);
+      console.log('Analysis complete:', jobInfo);
       uploadedFileName = file.name; // Mark this file as uploaded
       // Set warn based on current client-side estimate
       warnText = (estimated && estimated.video_kbps < 100) ? `Warning: Very low video bitrate (${Math.round(estimated.video_kbps)} kbps)` : null;
     } catch (err: any) {
-      console.error('Upload failed:', err);
-      errorText = `Upload failed: ${err.message || err}`;
+      console.error('Analysis failed:', err);
+      errorText = `Analysis failed: ${err.message || err}`;
     } finally {
       isUploading = false;
+      isAnalyzing = false;
     }
   }
 
@@ -515,16 +538,17 @@
     <div class="border-2 border-dashed border-gray-700 rounded p-8 text-center"
          on:drop={onDrop} on:dragover={allowDrop}>
       <p class="mb-2">Drag & drop a video here</p>
-  <input type="file" accept="video/*" on:change={(e:any)=>{ const f=e.target.files?.[0]||null; file=f; fileSizeLabel = f? formatSize(f.size): null; /* No auto-upload on change */ }} />
+  <input type="file" accept="video/*" on:change={(e:any)=>{ const f=e.target.files?.[0]||null; file=f; fileSizeLabel = f? formatSize(f.size): null; if(f) setTimeout(()=>doUpload(), 100); }} />
       {#if file}
         <p class="mt-2 text-sm text-gray-400">{file.name} {#if fileSizeLabel}<span class="opacity-70">• {fileSizeLabel}</span>{/if}</p>
       {/if}
       {#if isUploading}
         <div class="mt-4">
-          <p class="text-xs text-gray-400 mb-1">Uploading… {uploadProgress}%</p>
+          <p class="text-xs text-gray-400 mb-1">Analyzing video… {uploadProgress}%</p>
           <div class="h-2 bg-gray-800 rounded">
             <div class="h-2 bg-blue-600 rounded" style={`width:${uploadProgress}%`}></div>
           </div>
+          <p class="text-xs text-gray-500 mt-1">Reading file properties and calculating optimal bitrates...</p>
         </div>
       {/if}
     </div>
@@ -674,9 +698,9 @@
             <span class="text-sm">⬇️ Auto-download when done</span>
           </label>
           {#if container === 'mp4'}
-          <label class="flex items-center gap-2 cursor-pointer" title="Writes fragmented MP4 to avoid long 'finalizing' step. Compatible with modern players/Discord.">
+          <label class="flex items-center gap-2 cursor-pointer" title="Fragmented MP4 eliminates the long 'finalizing' step (99%->100%). Works with all modern players and Discord. Recommended!">
             <input type="checkbox" bind:checked={fastMp4Finalize} class="w-4 h-4" />
-            <span class="text-sm">🚀 Fast finalize (MP4)</span>
+            <span class="text-sm">🚀 Fast finalize (recommended)</span>
           </label>
           {/if}
           <label class="flex items-center gap-2 cursor-pointer">
@@ -716,8 +740,14 @@
   {/if}
 
   <div class="flex gap-2">
-    <button class="btn" on:click={doUpload} disabled={!file || isUploading}>
-      {isUploading ? `Uploading… ${uploadProgress}%` : 'Analyze'}
+    <button class="btn" on:click={doUpload} disabled={!file || isUploading || isAnalyzing}>
+      {#if isAnalyzing || isUploading}
+        Analyzing… {uploadProgress}%
+      {:else if jobInfo}
+        Re-analyze
+      {:else}
+        Analyze
+      {/if}
     </button>
     <button class="btn" on:click={doCompress} disabled={!jobInfo || isCompressing}>
       {#if isCompressing}
@@ -748,8 +778,10 @@
       </div>
       <div class="mt-2 text-xs text-gray-400 flex items-center justify-between">
         <span>{displayedProgress}%{#if isCompressing && displayedProgress>=99 && !doneStats} (finalizing…){/if}</span>
-        {#if isCompressing && etaLabel && displayedProgress<99}
+        {#if isCompressing && displayedProgress<99 && etaLabel}
           <span>~{etaLabel} remaining</span>
+        {:else if isCompressing && displayedProgress>=99 && !doneStats && !fastMp4Finalize}
+          <span class="text-amber-400">Tip: Enable "Fast finalize" to avoid this wait</span>
         {/if}
       </div>
       <details class="mt-3" open>

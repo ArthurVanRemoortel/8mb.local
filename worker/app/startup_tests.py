@@ -2,6 +2,7 @@
 Startup encoder tests to validate hardware acceleration on container boot.
 Populates ENCODER_TEST_CACHE so compress jobs don't pay the init test cost.
 """
+import os
 import subprocess
 import logging
 from typing import Dict, List, Tuple
@@ -163,5 +164,23 @@ def run_startup_tests(hw_info: Dict) -> Dict[str, bool]:
     
     logger.info("─" * 70)
     logger.info("")
+    
+    # Store results in Redis for backend access (30-day expiry)
+    try:
+        from redis import Redis
+        redis_url = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+        redis_client = Redis.from_url(redis_url, decode_responses=True)
+        # Store which encoders passed tests (simple format: "encoder_name" -> "1" or "0")
+        for codec in test_codecs:
+            try:
+                from .hw_detect import map_codec_to_hw
+                actual_encoder, _, init_hw_flags = map_codec_to_hw(codec, hw_info)
+                cache_key = f"{actual_encoder}:{':'.join(init_hw_flags)}"
+                if cache_key in cache:
+                    redis_client.setex(f"encoder_test:{codec}", 2592000, "1" if cache[cache_key] else "0")
+            except:
+                pass
+    except Exception as e:
+        logger.warning(f"Failed to store encoder test results in Redis: {e}")
     
     return cache

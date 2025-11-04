@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -22,6 +23,8 @@ from .models import UploadResponse, CompressRequest, StatusResponse, AuthSetting
 from .cleanup import start_scheduler
 from . import settings_manager
 from . import history_manager
+
+logger = logging.getLogger(__name__)
 
 UPLOADS_DIR = Path("/app/uploads")
 OUTPUTS_DIR = Path("/app/outputs")
@@ -293,7 +296,7 @@ async def get_hardware_info():
 
 @app.get("/api/codecs/available")
 async def get_available_codecs() -> AvailableCodecsResponse:
-    """Get available codecs based on hardware detection and user settings."""
+    """Get available codecs based on hardware detection, user settings, and encoder tests."""
     try:
         # Use cached hardware info
         hw_info = _get_hw_info_cached()
@@ -301,7 +304,20 @@ async def get_available_codecs() -> AvailableCodecsResponse:
         # Get user codec visibility settings
         codec_settings = settings_manager.get_codec_visibility_settings()
         
-        # Build list of enabled codecs based on user settings
+        # Check which encoders actually passed startup tests (from worker)
+        tested_codecs = {}
+        try:
+            all_codecs = ['h264_nvenc', 'hevc_nvenc', 'av1_nvenc', 'h264_qsv', 'hevc_qsv', 
+                         'av1_qsv', 'h264_vaapi', 'hevc_vaapi', 'av1_vaapi', 
+                         'h264_amf', 'hevc_amf', 'av1_amf',
+                         'libx264', 'libx265', 'libaom-av1']
+            for codec in all_codecs:
+                result = await redis.get(f"encoder_test:{codec}")
+                tested_codecs[codec] = (result == "1") if result else None  # None = not tested
+        except Exception as e:
+            logger.warning(f"Failed to get encoder test results: {e}")
+        
+        # Build list of enabled codecs based on user settings AND test results
         enabled_codecs = []
         codec_map = {
             'h264_nvenc': codec_settings.get('h264_nvenc', True),
@@ -313,13 +329,18 @@ async def get_available_codecs() -> AvailableCodecsResponse:
             'h264_vaapi': codec_settings.get('h264_vaapi', True),
             'hevc_vaapi': codec_settings.get('hevc_vaapi', True),
             'av1_vaapi': codec_settings.get('av1_vaapi', True),
+            'h264_amf': codec_settings.get('h264_amf', True),
+            'hevc_amf': codec_settings.get('hevc_amf', True),
+            'av1_amf': codec_settings.get('av1_amf', True),
             'libx264': codec_settings.get('libx264', True),
             'libx265': codec_settings.get('libx265', True),
             'libaom-av1': codec_settings.get('libaom_av1', True),
         }
         
         for codec, is_enabled in codec_map.items():
-            if is_enabled:
+            # Only include if: enabled in settings AND (not tested OR passed test)
+            test_result = tested_codecs.get(codec)
+            if is_enabled and (test_result is None or test_result is True):
                 enabled_codecs.append(codec)
         
         return AvailableCodecsResponse(
