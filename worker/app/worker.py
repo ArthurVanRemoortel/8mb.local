@@ -44,6 +44,7 @@ def get_hardware_info_task():
 def compress_video(self, job_id: str, input_path: str, output_path: str, target_size_mb: float,
                    video_codec: str, audio_codec: str, audio_bitrate_kbps: int, preset: str, tune: str = "hq",
                    max_width: int = None, max_height: int = None, start_time: str = None, end_time: str = None):
+    start_ts = time.time()
     # Detect hardware acceleration
     hw_info = get_hw_info()
     _publish(self.request.id, {"type": "log", "message": f"Hardware: {hw_info['type'].upper()} acceleration detected"})
@@ -478,7 +479,8 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
             # Import here to avoid circular dependency
             import sys
             sys.path.insert(0, '/app')
-            from backend.history_manager import add_history_entry
+            import importlib
+            hm = importlib.import_module('backend.history_manager')
             
             # Get original file size
             original_size = os.path.getsize(input_path)
@@ -488,9 +490,12 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
             filename = Path(input_path).name
             
             # Get compression duration (time taken)
-            compression_duration = time.time() - self.request.started if hasattr(self.request, 'started') else 0
+            compression_duration = max(time.time() - start_ts, 0)
             
-            add_history_entry(
+            # Derive container from output path
+            container = 'mp4' if str(output_path).lower().endswith('.mp4') else 'mkv'
+            
+            hm.add_history_entry(
                 filename=filename,
                 original_size_mb=original_size_mb,
                 compressed_size_mb=final_size_mb,
@@ -499,7 +504,15 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
                 target_mb=target_size_mb,
                 preset=preset_val,
                 duration=compression_duration,
-                task_id=self.request.id
+                task_id=self.request.id,
+                container=container,
+                tune=tune_val,
+                audio_bitrate_kbps=int(audio_bitrate_kbps),
+                max_width=max_width,
+                max_height=max_height,
+                start_time=start_time,
+                end_time=end_time,
+                encoder=actual_encoder,
             )
     except Exception as e:
         # Don't fail the job if history fails

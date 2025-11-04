@@ -163,7 +163,7 @@ def update_auth_settings(auth_enabled: bool, auth_user: Optional[str] = None, au
     env_vars.setdefault('FILE_RETENTION_HOURS', '1')
     env_vars.setdefault('REDIS_URL', 'redis://127.0.0.1:6379/0')
     env_vars.setdefault('BACKEND_HOST', '0.0.0.0')
-    env_vars.setdefault('BACKEND_PORT', '8000')
+    env_vars.setdefault('BACKEND_PORT', '8001')
     # Enable history by default
     env_vars.setdefault('HISTORY_ENABLED', 'true')
     
@@ -192,7 +192,7 @@ def initialize_env_if_missing():
             'FILE_RETENTION_HOURS': '1',
             'REDIS_URL': 'redis://127.0.0.1:6379/0',
             'BACKEND_HOST': '0.0.0.0',
-            'BACKEND_PORT': '8000',
+            'BACKEND_PORT': '8001',
             # History on by default
             'HISTORY_ENABLED': 'true'
         }

@@ -43,7 +43,16 @@ def add_history_entry(
     target_mb: float,
     preset: str,
     duration: float,
-    task_id: str
+    task_id: str,
+    *,
+    container: Optional[str] = None,
+    tune: Optional[str] = None,
+    audio_bitrate_kbps: Optional[int] = None,
+    max_width: Optional[int] = None,
+    max_height: Optional[int] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    encoder: Optional[str] = None,
 ) -> Dict:
     """Add a compression history entry"""
     entry = {
@@ -59,6 +68,24 @@ def add_history_entry(
         'duration_seconds': round(duration, 1),
         'task_id': task_id
     }
+
+    # Optional settings for richer history context
+    if container is not None:
+        entry['container'] = container
+    if tune is not None:
+        entry['tune'] = tune
+    if audio_bitrate_kbps is not None:
+        entry['audio_bitrate_kbps'] = int(audio_bitrate_kbps)
+    if max_width is not None:
+        entry['max_width'] = int(max_width)
+    if max_height is not None:
+        entry['max_height'] = int(max_height)
+    if start_time is not None:
+        entry['start_time'] = start_time
+    if end_time is not None:
+        entry['end_time'] = end_time
+    if encoder is not None:
+        entry['encoder'] = encoder
     
     history = _read_history()
     history.insert(0, entry)  # Add to beginning (newest first)

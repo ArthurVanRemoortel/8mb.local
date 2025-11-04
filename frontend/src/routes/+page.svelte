@@ -42,6 +42,12 @@
   let isUploading = false;
   let uploadProgress = 0;
   let isCancelling = false;
+  // ETA / status helpers
+  let startedAt: number | null = null;
+  let etaSeconds: number | null = null;
+  let etaLabel: string | null = null;
+  let currentSpeedX: number | null = null;
+  let hasProgress = false;
   // Support widget state
   let showSupport = false;
   function toggleSupport(){ showSupport = !showSupport; }
@@ -225,6 +231,17 @@
     return `${gb.toFixed(2)} GB`;
   }
 
+  function formatEta(sec: number): string {
+    if (!isFinite(sec) || sec < 0) return '';
+    const s = Math.round(sec);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${r}s`;
+    return `${r}s`;
+  }
+
   function setPresetMB(mb:number){ targetMB = mb; }
   // "10MB (Discord)" option: pick slightly under to ensure final stays below 10MB
   function setPresetMBSafe10(){ targetMB = 9.7; }
@@ -270,6 +287,12 @@
     errorText = null;
     try {
       isCompressing = true;
+      hasProgress = false;
+      startedAt = Date.now();
+      etaSeconds = null;
+      etaLabel = null;
+      currentSpeedX = null;
+      logLines = ['Starting compression…', ...logLines].slice(0, 500);
       const payload = {
         job_id: jobInfo.job_id,
         filename: jobInfo.filename,
@@ -294,16 +317,46 @@
       esRef = es;
       es.onmessage = (ev) => {
         try { const data = JSON.parse(ev.data);
-          if (data.type === 'progress') { progress = data.progress; }
-          if (data.type === 'log' && data.message) { logLines = [data.message, ...logLines].slice(0, 500); }
+          if (data.type === 'progress') {
+            progress = data.progress;
+            if (progress > 0) {
+              hasProgress = true;
+              // Prefer duration/speed-based ETA when available
+              const dur = Number(jobInfo?.duration_s) || 0;
+              if (dur > 0 && currentSpeedX && currentSpeedX > 0) {
+                const elapsedVideo = (progress/100) * dur;
+                const remainingVideo = Math.max(dur - elapsedVideo, 0);
+                etaSeconds = remainingVideo / currentSpeedX;
+              } else if (startedAt && progress > 0) {
+                const elapsedWall = (Date.now() - startedAt) / 1000;
+                etaSeconds = elapsedWall * (100 - progress) / progress;
+              }
+              etaLabel = etaSeconds != null ? formatEta(etaSeconds) : null;
+            }
+          }
+          if (data.type === 'log' && data.message) {
+            // Update mini-ETA from speed if present
+            if (data.message.startsWith('speed=')) {
+              const m = data.message.match(/speed=([0-9]*\.?[0-9]+)x/i);
+              if (m) {
+                const sp = parseFloat(m[1]);
+                if (isFinite(sp) && sp > 0) {
+                  currentSpeedX = sp;
+                }
+              }
+            }
+            logLines = [data.message, ...logLines].slice(0, 500);
+          }
           if (data.type === 'canceled') {
             isCompressing = false;
+            startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false;
             errorText = 'Job canceled';
           }
           if (data.type === 'done') { 
             doneStats = data.stats; 
             progress = 100;
             isCompressing = false;
+            startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false;
             try { esRef?.close(); } catch {}
           } else if (data.type === 'canceled') {
             isCompressing = false;
@@ -322,13 +375,14 @@
               }, 500);
             }
           }
-          if (data.type === 'error') { logLines = [data.message, ...logLines]; isCompressing = false; try { esRef?.close(); } catch {} }
+          if (data.type === 'error') { logLines = [data.message, ...logLines]; isCompressing = false; startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false; try { esRef?.close(); } catch {} }
         } catch {}
       }
       es.onerror = () => {
         logLines = ['[SSE] Connection error: lost progress stream.', ...logLines].slice(0, 500);
         errorText = 'Lost connection to progress stream. Check server/network and try again.';
         isCompressing = false;
+        startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false;
         try { esRef?.close(); } catch {}
       }
     } catch (err: any) {
@@ -377,6 +431,7 @@
   }
 
   function reset(){ file=null; uploadedFileName=null; jobInfo=null; taskId=null; progress=0; logLines=[]; doneStats=null; warnText=null; errorText=null; isUploading=false; isCompressing=false; try { esRef?.close(); } catch {} }
+  $: (() => { /* clear ETA when not compressing */ if (!isCompressing) { startedAt = null; etaSeconds = null; etaLabel = null; currentSpeedX = null; hasProgress = false; } })();
 
   async function onCancel(){
     if (!taskId || isCancelling) return;
@@ -635,7 +690,17 @@
     <button class="btn" on:click={doUpload} disabled={!file || isUploading}>
       {isUploading ? `Uploading… ${uploadProgress}%` : 'Analyze'}
     </button>
-    <button class="btn" on:click={doCompress} disabled={!jobInfo}>Compress</button>
+    <button class="btn" on:click={doCompress} disabled={!jobInfo || isCompressing}>
+      {#if isCompressing}
+        {#if hasProgress}
+          Compressing… {progress}%{#if etaLabel} — ~{etaLabel} left{/if}
+        {:else}
+          Starting…
+        {/if}
+      {:else}
+        Compress
+      {/if}
+    </button>
     {#if taskId && isCompressing}
       <button class="btn" on:click={onCancel} disabled={isCancelling}>{isCancelling ? 'Canceling…' : 'Cancel'}</button>
     {/if}
@@ -646,6 +711,12 @@
     <div class="card">
       <div class="h-3 bg-gray-800 rounded">
         <div class="h-3 bg-indigo-600 rounded" style={`width:${progress}%`}></div>
+      </div>
+      <div class="mt-2 text-xs text-gray-400 flex items-center justify-between">
+        <span>{progress}%</span>
+        {#if isCompressing && etaLabel}
+          <span>~{etaLabel} remaining</span>
+        {/if}
       </div>
       <details class="mt-3" open>
         <summary>FFmpeg log</summary>
@@ -727,14 +798,18 @@
 
 {#if isUploading || isCompressing}
   <!-- Non-blocking mini status panel in bottom-right -->
-  <div class="fixed bottom-4 right-4 z-40 pointer-events-none">
+  <div class="fixed bottom-20 right-4 z-40 pointer-events-none">
     <div class="pointer-events-auto bg-gray-900/95 border border-gray-700 rounded-lg p-3 shadow-xl flex items-center gap-3">
       <div class="h-5 w-5 rounded-full border-2 border-gray-600 border-t-indigo-500 animate-spin"></div>
       <div class="text-sm">
         {#if isUploading}
           <div>Uploading… {uploadProgress}%</div>
         {:else if isCompressing}
-          <div>Compressing… {progress}%</div>
+          {#if hasProgress}
+            <div>Compressing… {progress}%{#if etaLabel} — ~{etaLabel} left{/if}</div>
+          {:else}
+            <div>Starting…</div>
+          {/if}
         {/if}
       </div>
     </div>

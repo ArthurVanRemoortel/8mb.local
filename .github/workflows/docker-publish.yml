@@ -68,5 +68,5 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.taglist.outputs.tags }}
           build-args: |
-            PUBLIC_BACKEND_URL=http://localhost:8000
+            PUBLIC_BACKEND_URL=http://localhost:8001
         # Note: latest/ref tags are added only when non-empty; Docker will ignore blank tags.

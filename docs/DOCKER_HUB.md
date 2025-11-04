@@ -37,11 +37,11 @@ For users who just want to run the stack (no build needed):
 docker compose -f docker-compose.hub.yml up -d
 ```
 
-- Backend: http://localhost:8000
+- Backend: http://localhost:8001
 - Frontend: http://localhost:5173
 
 Environment defaults:
-- `PUBLIC_BACKEND_URL` points to `http://localhost:8000`
+- `PUBLIC_BACKEND_URL` points to `http://localhost:8001`
 - `REDIS_URL` uses the compose Redis service
 - Auth defaults can be overridden in a `.env` file if desired
 

@@ -14,6 +14,15 @@
 		preset: string;
 		duration_seconds: number;
 		task_id: string;
+		// Optional richer settings
+		container?: string;
+		tune?: string;
+		audio_bitrate_kbps?: number;
+		max_width?: number;
+		max_height?: number;
+		start_time?: string;
+		end_time?: string;
+		encoder?: string;
 	}
 
 	let entries: HistoryEntry[] = [];
@@ -69,6 +78,11 @@
 		const minutes = Math.floor(seconds / 60);
 		const secs = Math.floor(seconds % 60);
 		return `${minutes}m ${secs}s`;
+	}
+
+	function labelOrDash(v?: string | number) {
+		if (v === undefined || v === null || v === '') return '—';
+		return String(v);
 	}
 
 	onMount(fetchHistory);
@@ -148,11 +162,48 @@
 								<span class="label">Preset:</span>
 								<span class="badge">{entry.preset}</span>
 							</div>
+							{#if entry.tune}
+							<div class="codec-row">
+								<span class="label">Tune:</span>
+								<span class="badge">{entry.tune}</span>
+							</div>
+							{/if}
+							{#if entry.container}
+							<div class="codec-row">
+								<span class="label">Container:</span>
+								<span class="badge">{entry.container}</span>
+							</div>
+							{/if}
+							{#if entry.audio_bitrate_kbps}
+							<div class="codec-row">
+								<span class="label">Audio kbps:</span>
+								<span class="badge">{entry.audio_bitrate_kbps}</span>
+							</div>
+							{/if}
+							{#if entry.encoder}
+							<div class="codec-row">
+								<span class="label">Encoder:</span>
+								<span class="badge">{entry.encoder}</span>
+							</div>
+							{/if}
 							<div class="codec-row">
 								<span class="label">Time:</span>
 								<span class="badge">{formatDuration(entry.duration_seconds)}</span>
 							</div>
 						</div>
+
+						{#if entry.max_width || entry.max_height || entry.start_time || entry.end_time}
+						<div class="codec-info">
+							<div class="codec-row">
+								<span class="label">Max WxH:</span>
+								<span class="badge">{labelOrDash(entry.max_width)}×{labelOrDash(entry.max_height)}</span>
+							</div>
+							<div class="codec-row">
+								<span class="label">Trim:</span>
+								<span class="badge">{labelOrDash(entry.start_time)} → {labelOrDash(entry.end_time)}</span>
+							</div>
+						</div>
+						{/if}
 					</div>
 
 					<button class="btn-delete" on:click={() => deleteEntry(entry.task_id)}>

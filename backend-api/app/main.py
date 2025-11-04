@@ -179,7 +179,8 @@ async def compress(req: CompressRequest):
     if not input_path.exists():
         raise HTTPException(status_code=404, detail="Input not found")
     ext = ".mp4" if req.container == "mp4" else ".mkv"
-    output_name = input_path.stem + "_8mb" + ext
+    # Use new suffix to clearly identify local outputs
+    output_name = input_path.stem + "_8mblocal" + ext
     output_path = OUTPUTS_DIR / output_name
     task = celery_app.send_task(
         "worker.worker.compress_video",

@@ -1,8 +1,10 @@
 # 8mb.local – Self‑Hosted GPU Video Compressor
 
-8mb.local is a self‑hosted, fire‑and‑forget video compressor. Drop a file, choose a target size (e.g., 8MB, 25MB, 50MB, 100MB), and let GPU-accelerated encoding produce compact outputs with AV1/HEVC/H.264. Supports **NVIDIA NVENC**, **Intel QSV**, **AMD VAAPI**, and **CPU fallback**. The stack includes a SvelteKit UI, FastAPI backend, Celery worker, Redis broker, and real‑time progress via Server‑Sent Events (SSE).
+8mb.local is a self‑hosted, fire‑and‑forget video compressor. Drop a file, choose a target size (e.g., 8MB, 25MB, 50MB, 100MB), and let GPU-accelerated encoding produce compact outputs with AV1/HEVC/H.264. Supports **NVIDIA NVENC**, **Intel/AMD VAAPI** (Linux), and **CPU fallback**. The stack includes a SvelteKit UI, FastAPI backend, Celery worker, Redis broker, and real‑time progress via Server‑Sent Events (SSE).
 
 > **Note**: Windows-only encoders (AMD AMF) have been removed as they don't work in Docker's Linux environment. AMD GPUs use VAAPI on Linux.
+>
+> **Note**: Intel QSV via libmfx is not compiled into this image to keep builds reliable; Intel GPUs are supported via VAAPI on Linux.
 
 ## Screenshots
 
@@ -18,7 +20,7 @@
 </details>
 
 ## Features
-- **Multi-vendor GPU support**: Auto-detects NVIDIA NVENC, Intel QSV, AMD VAAPI, or falls back to CPU
+- **Multi-vendor GPU support**: Auto-detects NVIDIA NVENC, Intel/AMD VAAPI (Linux), or falls back to CPU
 - **Robust encoder validation**: Tests actual encoder initialization, not just availability listing
 - **Automatic CPU fallback**: Gracefully handles missing drivers, permission issues, or hardware access problems
 - Drag‑and‑drop UI with helpful presets and advanced options (codec, container, tune, audio bitrate)
@@ -27,6 +29,9 @@
 - **Video trimming**: Specify start/end times (seconds or HH:MM:SS format)
 - ffprobe analysis on upload for instant estimates and warnings
 - Real‑time progress and FFmpeg logs via SSE
+- **One‑click Cancel**: Stop an in‑flight encode; worker interrupts FFmpeg immediately
+- **History tracking enabled by default**: Recent jobs stored in `/app/history.json`
+- **Auto‑download enabled by default**
 - Hardware encoders: AV1, HEVC (H.265), H.264 (GPU-accelerated when available)
 - Software fallback: libx264, libx265, libaom-av1 for CPU-only systems
 - Output container choice: MP4 or MKV, with compatibility safeguards
@@ -46,7 +51,7 @@ flowchart LR
 Components
 - Frontend (SvelteKit + Vite): drag‑and‑drop UI, size estimates, SSE progress/logs, final download.
 - Backend API (FastAPI): accepts uploads, runs ffprobe, relays SSE, and serves downloads.
-- Worker (Celery + FFmpeg 7.x): executes compression with auto-detected hardware acceleration (NVENC/QSV/AMF/VAAPI/CPU); parses `ffmpeg -progress` and publishes updates.
+- Worker (Celery + FFmpeg 6.1.1): executes compression with auto-detected hardware acceleration (NVENC/VAAPI/CPU); parses `ffmpeg -progress` and publishes updates.
 - Redis (broker + pub/sub): Celery broker and transport for progress/log events.
 
 Data & files
@@ -63,8 +68,8 @@ Data & files
 - `FILE_RETENTION_HOURS` - Hours to keep uploaded/output files (default: 1)
 - `REDIS_URL` - Redis connection URL (default: `redis://127.0.0.1:6379/0`)
 - `BACKEND_HOST` - Backend bind address (default: 0.0.0.0)
-- `BACKEND_PORT` - Backend port (default: 8000)
-- `PUBLIC_BACKEND_URL` - Frontend API endpoint (defaults to `http://localhost:8000`)
+- `BACKEND_PORT` - Backend port (default: 8001)
+- `PUBLIC_BACKEND_URL` - Frontend API endpoint; leave unset to use same‑origin (recommended)
 
 ### Codec Visibility Settings
 Control which codecs appear in the UI via environment variables or the Settings page:
@@ -92,7 +97,7 @@ AUTH_PASS=changeme
 FILE_RETENTION_HOURS=1
 REDIS_URL=redis://127.0.0.1:6379/0
 BACKEND_HOST=0.0.0.0
-BACKEND_PORT=8000
+BACKEND_PORT=8001
 ```
 
 ## Using the app
@@ -104,7 +109,7 @@ BACKEND_PORT=8000
    - Speed/Quality: NVENC P1 (fast) … P7 (best). Default P6.
    - Container: MP4 (most compatible) or MKV (best with Opus).
    - Tune: Best Quality (HQ), Low Latency, Ultra‑Low Latency, or Lossless.
-4. Click Compress and watch progress/logs. Download when done.
+4. Click Compress and watch progress/logs. Use Cancel to stop mid‑encode. Download starts automatically when done.
 
 Codec/container notes
 - MP4 + Opus isn’t widely supported. If MP4+Opus is selected, the worker automatically uses AAC to preserve compatibility. MKV supports Opus directly.
@@ -157,26 +162,26 @@ The easiest way to run 8mb.local is with the pre-built Docker image. Choose the 
 
 #### CPU Only (No GPU)
 ```bash
-docker run -d --name 8mblocal -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
+docker run -d --name 8mblocal -p 8001:8001 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
 ```
 
 #### NVIDIA GPU (NVENC)
 ```bash
-docker run -d --name 8mblocal --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
+docker run -d --name 8mblocal --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility -p 8001:8001 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
 ```
 > **Note**: The `-e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility` environment variable is **required** to enable NVENC support. It tells the NVIDIA Container Toolkit to mount video encoding libraries into the container.
 
 #### Intel/AMD GPU (VAAPI - Linux)
 ```bash
-docker run -d --name 8mblocal --device=/dev/dri:/dev/dri -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
+docker run -d --name 8mblocal --device=/dev/dri:/dev/dri -p 8001:8001 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
 ```
 
 #### NVIDIA + VAAPI (Dual GPU - Linux)
 ```bash
-docker run -d --name 8mblocal --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility --device=/dev/dri:/dev/dri -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
+docker run -d --name 8mblocal --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility --device=/dev/dri:/dev/dri -p 8001:8001 -v ./uploads:/app/uploads -v ./outputs:/app/outputs jms1717/8mblocal:latest
 ```
 
-Access the web UI at: **http://localhost:8000**
+Access the web UI at: **http://localhost:8001**
 
 ### Docker Compose
 
@@ -184,14 +189,12 @@ For easier management, use Docker Compose. Create a `docker-compose.yml` file:
 
 #### CPU Only
 ```yaml
-version: '3.8'
-
 services:
   8mblocal:
     image: jms1717/8mblocal:latest
     container_name: 8mblocal
     ports:
-      - "8000:8000"
+      - "8001:8001"
     volumes:
       - ./uploads:/app/uploads
       - ./outputs:/app/outputs
@@ -201,14 +204,12 @@ services:
 
 #### NVIDIA GPU
 ```yaml
-version: '3.8'
-
 services:
   8mblocal:
     image: jms1717/8mblocal:latest
     container_name: 8mblocal
     ports:
-      - "8000:8000"
+      - "8001:8001"
     volumes:
       - ./uploads:/app/uploads
       - ./outputs:/app/outputs
@@ -227,14 +228,12 @@ services:
 
 #### Intel/AMD VAAPI (Linux)
 ```yaml
-version: '3.8'
-
 services:
   8mblocal:
     image: jms1717/8mblocal:latest
     container_name: 8mblocal
     ports:
-      - "8000:8000"
+      - "8001:8001"
     volumes:
       - ./uploads:/app/uploads
       - ./outputs:/app/outputs
@@ -246,14 +245,12 @@ services:
 
 #### NVIDIA + VAAPI (Dual GPU)
 ```yaml
-version: '3.8'
-
 services:
   8mblocal:
     image: jms1717/8mblocal:latest
     container_name: 8mblocal
     ports:
-      - "8000:8000"
+      - "8001:8001"
     volumes:
       - ./uploads:/app/uploads
       - ./outputs:/app/outputs
@@ -288,7 +285,7 @@ cd 8mb.local
 2. Build and run:
 ```bash
 docker build -t 8mblocal:local .
-docker run -d --name 8mblocal -p 8000:8000 -v ./uploads:/app/uploads -v ./outputs:/app/outputs 8mblocal:local
+docker run -d --name 8mblocal -p 8001:8001 -v ./uploads:/app/uploads -v ./outputs:/app/outputs 8mblocal:local
 ```
 
 Or with Docker Compose:
@@ -326,7 +323,7 @@ CODEC_LIBAOM_AV1=true
 # Redis (internal, usually no need to change)
 REDIS_URL=redis://127.0.0.1:6379/0
 BACKEND_HOST=0.0.0.0
-BACKEND_PORT=8000
+BACKEND_PORT=8001
 ```
 
 Mount it with `-v ./.env:/app/.env` in docker run, or add it to volumes in docker-compose.yml.
@@ -369,7 +366,7 @@ docker exec 8mblocal bash -c "ffmpeg -hide_banner -encoders | grep -E 'nvenc|qsv
 docker logs 8mblocal
 ```
 
-Access the UI at **http://localhost:8000** and go to **Settings → Available Codecs** to see detected hardware.
+Access the UI at **http://localhost:8001** and go to **Settings → Available Codecs** to see detected hardware.
 
 ### Update to Latest Version
 
@@ -394,7 +391,7 @@ docker compose up -d
     docker run -d --name 8mblocal \
       --gpus all \
       -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility \
-      -p 8001:8000 \
+      -p 8001:8001 \
       -v ./uploads:/app/uploads \
       -v ./outputs:/app/outputs \
       jms1717/8mblocal:latest
@@ -546,8 +543,8 @@ This resolved the exact issue encountered on the powerhouse server.
   - Try: `chmod 777 uploads outputs` or `chown -R $USER:$USER uploads outputs`
   
 - **Ports in use**: 
-  - Change port mapping: `-p 8080:8000` instead of `-p 8000:8000`
-  - Update `PUBLIC_BACKEND_URL` if using different port
+  - Change port mapping: `-p 8080:8001` instead of `-p 8001:8001`
+  - Usually no need to set `PUBLIC_BACKEND_URL` (frontend uses same‑origin)
   
 - **No progress events**: 
   - Ensure frontend can reach backend directly (check browser console)
