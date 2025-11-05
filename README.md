@@ -2,22 +2,62 @@
 
 8mb.local is a self‑hosted, fire‑and‑forget video compressor. Drop a file, choose a target size (e.g., 8MB, 25MB, 50MB, 100MB), and let GPU-accelerated encoding produce compact outputs with AV1/HEVC/H.264. Supports **NVIDIA NVENC**, **Intel/AMD VAAPI** (Linux), and **CPU fallback**. The stack includes a SvelteKit UI, FastAPI backend, Celery worker, Redis broker, and real‑time progress via Server‑Sent Events (SSE).
 
-> **Note**: Windows-only encoders (AMD AMF) have been removed as they don't work in Docker's Linux environment. AMD GPUs use VAAPI on Linux.
->
-> **Note**: Intel QSV via libmfx is not compiled into this image to keep builds reliable; Intel GPUs are supported via VAAPI on Linux.
+## Table of Contents
+* [Features](#features)
+* [Architecture](#architecture-technical-deep-dive)
+* [Installation](#installation)
+* [Usage](#using-the-app)
+* [Configuration](#configuration)
+* [Reverse Proxy Configuration](#reverse-proxy-configuration)
+* [Troubleshooting](#troubleshooting)
 
 ## Screenshots
 
-<details>
-<summary>Screenshots (click to expand)</summary>
+<br/>
 
 <br/>
 
-![8mb.local – initial screen](docs/images/ui-empty.png)
-
-![8mb.local – analyze, advanced options, progress, download](docs/images/ui-job-complete.png)
-
-</details>
+<table valign="top"> <tr>
+    <td align="center">
+      <b>Main Interface</b><br/>
+      <img src="docs/images/main.png" alt="Main Interface" width="100%">
+    </td>
+    <td align="center">
+      <b>GPU Support List</b><br/>
+      <img src="docs/images/gpulist.png" alt="GPU Support List" width="100%">
+    </td>
+    <td align="center">
+      <b>Settings Panel</b><br/>
+      <img src="docs/images/settings.png" alt="Settings Panel" width="100%">
+    </td>
+  </tr>
+  <tr valign="top">
+    <td align="center">
+      <b>Live Queue</b><br/>
+      <img src="docs/images/queue.png" alt="Live Queue" width="100%">
+    </td>
+    <td align="center">
+      <b>Compressing (Real-time Logs)</b><br/>
+      <img src="docs/images/compressing.png" alt="Compressing with real-time logs" width="100%">
+    </td>
+    <td align="center">
+      <b>Encoder Validation Tests</b><br/>
+      <img src="docs/images/encodertests.png" alt="Encoder Validation Tests" width="100%">
+    </td>
+  </tr>
+  <tr valign="top">
+    <td align="center">
+      <b>Job History</b><br/>
+      <img src="docs/images/history.png" alt="Job History" width="100%">
+    </td>
+    <td align="center">
+      <b>Advanced Options</b><br/>
+      <img src="docs/images/advanced.png" alt="Advanced Options" width="100%">
+    </td>
+    <td align="center">
+    </td>
+  </tr>
+</table>
 
 ## Features
 - **Multi-vendor GPU support**: Auto-detects NVIDIA NVENC, Intel/AMD VAAPI (Linux), or falls back to CPU
