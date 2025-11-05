@@ -625,6 +625,58 @@ async def cancel_job(task_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/queue/clear")
+async def clear_queue():
+    """Clear all jobs from the queue (cancel running, remove pending/completed)."""
+    try:
+        # Get all job IDs from active set
+        job_ids = await redis.zrange("jobs:active", 0, -1)
+        
+        cancelled_count = 0
+        removed_count = 0
+        
+        for task_id in job_ids:
+            try:
+                # Get job metadata to check state
+                job_data = await redis.get(f"job:{task_id}")
+                if job_data:
+                    job_meta = JobMetadata(**orjson.loads(job_data))
+                    
+                    # Cancel if running or queued
+                    if job_meta.state in ('queued', 'running'):
+                        # Set cancel flag
+                        await redis.set(f"cancel:{task_id}", "1", ex=3600)
+                        # Notify via SSE
+                        await redis.publish(
+                            f"progress:{task_id}", 
+                            orjson.dumps({"type": "log", "message": "Queue cleared - job cancelled"}).decode()
+                        )
+                        # Revoke from Celery
+                        try:
+                            celery_app.control.revoke(task_id, terminate=True)
+                        except Exception:
+                            pass
+                        cancelled_count += 1
+                    
+                    # Remove from active set
+                    await redis.zrem("jobs:active", task_id)
+                    # Remove job metadata
+                    await redis.delete(f"job:{task_id}")
+                    removed_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to clear job {task_id}: {e}")
+                continue
+        
+        return {
+            "status": "cleared",
+            "cancelled": cancelled_count,
+            "removed": removed_count,
+            "total": len(job_ids)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def _sse_event_generator(task_id: str) -> AsyncGenerator[bytes, None]:
     """SSE stream combining Redis pubsub messages with periodic heartbeats.
 

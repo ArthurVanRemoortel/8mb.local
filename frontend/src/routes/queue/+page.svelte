@@ -150,6 +150,23 @@
     }
   }
 
+  async function clearQueue() {
+    if (!confirm('Clear all jobs from the queue? This will cancel running jobs and remove all entries.')) {
+      return;
+    }
+    
+    try {
+      const res = await fetch('/api/queue/clear', { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const result = await res.json();
+      alert(`Queue cleared: ${result.cancelled} job(s) cancelled, ${result.removed} total removed`);
+      // Refresh queue status
+      await fetchQueueStatus();
+    } catch (e: any) {
+      alert(`Clear queue failed: ${e.message || e}`);
+    }
+  }
+
   function formatTimestamp(ts?: number): string {
     if (!ts) return '—';
     const d = new Date(ts * 1000);
@@ -253,6 +270,14 @@
   <div class="flex items-center justify-between mb-4">
     <h1 class="text-2xl font-bold">Compression Queue</h1>
     <div class="flex gap-4">
+      {#if queueStatus.active_jobs.length > 0}
+        <button 
+          on:click={clearQueue}
+          class="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors text-sm font-semibold"
+        >
+          🗑️ Clear Queue
+        </button>
+      {/if}
       <a href="/" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors text-sm">
         ← Back to Compress
       </a>

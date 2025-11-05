@@ -521,15 +521,18 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
                     # Calculate progress using multiple signals
                     if key == "out_time_ms" and duration > 0:
                         try:
-                            # 1. Time-based progress (most straightforward)
+                            # 1. Time-based progress (most reliable throughout)
                             time_progress = min(max(current_time_s / duration, 0.0), 1.0)
                             
-                            # 2. Size-based progress (actual output size vs estimated target)
-                            # Target size in bytes = target_size_mb * 1024 * 1024
+                            # 2. Size-based progress (can overshoot early if bitrate high)
+                            # Be conservative: cap at time_progress to avoid wild jumps
                             target_bytes = target_size_mb * 1024 * 1024
                             size_progress = 0.0
                             if current_size_bytes > 0 and target_bytes > 0:
-                                size_progress = min(max(current_size_bytes / target_bytes, 0.0), 1.2)  # Allow slight overage
+                                raw_size_progress = current_size_bytes / target_bytes
+                                # Don't let size-based progress get too far ahead of time-based
+                                size_progress = min(raw_size_progress, time_progress * 1.1)  # Allow 10% ahead max
+                                size_progress = min(max(size_progress, 0.0), 1.0)
                             
                             # 3. Wall-clock time estimate using speed
                             elapsed = max(time.time() - start_ts, 0.0)
@@ -542,17 +545,21 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
                                 except Exception:
                                     pass
                             
-                            # Smart blending: use the most reliable signal based on what's available
-                            # Priority: size > time > wallclock
-                            if size_progress > 0.01:
-                                # Size is most accurate - use it primarily, smooth with time
-                                scaled_progress = (0.7 * size_progress + 0.3 * time_progress) * encoding_portion
+                            # Smart blending prioritizing stability
+                            # Use time as anchor, adjust slightly with other signals
+                            if size_progress > 0.01 and wallclock_progress > 0.01 and elapsed > 3.0:
+                                # All signals available - weighted average favoring time
+                                scaled_progress = (0.6 * time_progress + 0.25 * size_progress + 0.15 * wallclock_progress) * encoding_portion
                             elif wallclock_progress > 0.01 and elapsed > 3.0:
-                                # Wall clock reliable after a few seconds
-                                scaled_progress = (0.6 * wallclock_progress + 0.4 * time_progress) * encoding_portion
+                                # Time + wallclock
+                                scaled_progress = (0.7 * time_progress + 0.3 * wallclock_progress) * encoding_portion
                             else:
-                                # Fall back to time-based
+                                # Fall back to pure time-based (most stable)
                                 scaled_progress = time_progress * encoding_portion
+                            
+                            # Smoothing: don't allow backwards movement > 2%
+                            if last_progress > 0 and scaled_progress < (last_progress - 0.02):
+                                scaled_progress = last_progress - 0.02  # Gradual correction instead of jump
                             
                             # Safety clamp
                             scaled_progress = min(max(scaled_progress, 0.0), encoding_portion)

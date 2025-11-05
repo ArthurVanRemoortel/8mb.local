@@ -112,6 +112,8 @@
   let decodeMethod: string | null = null;
   let encodeMethod: string | null = null;
   let isFinalizing = false; // Track if we're in the finalization phase
+  let isRetrying = false; // Track if we're in automatic retry mode
+  let retryMessage = ''; // Retry details to display
   let finalizePoller: any = null; // interval id for readiness polling during finalizing
   // Support widget state
   let showSupport = false;
@@ -572,6 +574,8 @@
             displayedProgress = 100;
             isCompressing = false;
             isFinalizing = false;
+            isRetrying = false;
+            retryMessage = '';
             isReady = true;
             hasProgress = false;
             
@@ -604,12 +608,37 @@
           
           // Handle retry
           if (data.type === 'retry') {
-            logLines = [`🔄 ${data.message}`, ...logLines].slice(0, 500);
-            // Play a different sound for retry
+            isRetrying = true;
+            retryMessage = `File was ${data.overage_percent?.toFixed(1)}% over target - Re-encoding with optimized bitrate`;
+            
+            logLines = [`🔄 RETRY: ${data.message}`, ...logLines].slice(0, 500);
+            
+            // Show prominent notification banner
+            const retryMsg = `⚠️ File too large (${data.overage_percent?.toFixed(1)}% over target) - Re-encoding with adjusted bitrate...`;
+            logLines = [
+              '═══════════════════════════════════════════════════',
+              `🔄 AUTOMATIC RETRY IN PROGRESS`,
+              retryMsg,
+              'This is normal - the system will automatically optimize the output.',
+              '═══════════════════════════════════════════════════',
+              ...logLines
+            ].slice(0, 500);
+            
+            // Play distinct "retry" sound (double beep)
             try {
+              // Different tone pattern for retry - two quick beeps
               const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
               audio.play().catch(() => {});
+              // Play second beep after short delay
+              setTimeout(() => {
+                const audio2 = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
+                audio2.play().catch(() => {});
+              }, 200);
             } catch {}
+            
+            // Reset progress for retry
+            displayedProgress = 1;
+            progress = 1;
           }
           
           // Handle cancellation
@@ -1201,6 +1230,20 @@
       {#if encodeMethod && encodeMethod.startsWith('lib') && hardwareType !== 'cpu'}
         <div class="text-xs text-amber-300 mt-1">Hardware encoder unavailable for this job — using CPU fallback.</div>
       {/if}
+      
+      {#if isRetrying}
+        <div class="mb-3 p-3 bg-amber-900/30 border-2 border-amber-500 rounded-lg animate-pulse">
+          <div class="flex items-center gap-2">
+            <span class="text-2xl">🔄</span>
+            <div class="flex-1">
+              <div class="font-bold text-amber-300 text-lg">AUTOMATIC RETRY IN PROGRESS</div>
+              <div class="text-sm text-amber-200 mt-1">{retryMessage}</div>
+              <div class="text-xs text-gray-400 mt-1">This is normal - optimizing output to meet target size</div>
+            </div>
+          </div>
+        </div>
+      {/if}
+      
       <div class="h-3 bg-gray-800 rounded">
         <div class="h-3 bg-indigo-600 rounded" style={`width:${displayedProgress}%`}></div>
       </div>
