@@ -348,11 +348,19 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
         except Exception:
             return False
 
-    # AV1: Use software decode (libdav1d) for better compatibility
-    # av1_cuvid often causes pixel format issues with av1_nvenc
+    # AV1 decode strategy
     if in_codec == "av1":
-        input_opts += ["-c:v", "libdav1d"]
-        _publish(self.request.id, {"type": "log", "message": "Decoder: using libdav1d for AV1 input"})
+        if actual_encoder.endswith("_nvenc") and can_av1_cuvid_decode(input_path):
+            # Use CUDA decode with cuda output format for GPU-to-GPU pipeline
+            init_hw_flags = ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] + init_hw_flags
+            input_opts += ["-c:v", "av1_cuvid"]
+            # Remove -pix_fmt yuv420p from v_flags since we're using CUDA frames
+            v_flags = [f for i, f in enumerate(v_flags) if not (f == "-pix_fmt" or (i > 0 and v_flags[i-1] == "-pix_fmt"))]
+            _publish(self.request.id, {"type": "log", "message": "Decoder: using av1_cuvid (CUDA) with GPU-to-GPU pipeline"})
+        else:
+            # Software decode fallback
+            input_opts += ["-c:v", "libdav1d"]
+            _publish(self.request.id, {"type": "log", "message": "Decoder: using libdav1d for AV1 input"})
     elif in_codec in ("h264", "hevc") and actual_encoder.endswith("_nvenc"):
         # H.264/HEVC: NVDEC widely supported
         init_hw_flags = ["-hwaccel", "cuda"] + init_hw_flags
