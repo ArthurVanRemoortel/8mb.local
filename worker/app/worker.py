@@ -447,6 +447,7 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
         current_time_s = 0.0  # out_time_ms converted to seconds
         current_size_bytes = 0  # total_size in bytes
         current_bitrate_kbps = 0.0  # bitrate in kbps
+        last_time_s = 0.0  # Track last time value to detect restarts
         
         # Dynamic progress emit threshold
         min_step = 0.0005  # 0.05%
@@ -492,7 +493,20 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
                     # Collect all progress metrics from ffmpeg
                     if key == "out_time_ms":
                         try:
-                            current_time_s = int(val) / 1000.0
+                            new_time_s = int(val) / 1000.0
+                            
+                            # Detect FFmpeg restart (time goes backwards significantly)
+                            if last_time_s > 0 and new_time_s < (last_time_s * 0.5):
+                                # FFmpeg restarted (retry or new pass) - reset tracking
+                                current_size_bytes = 0
+                                current_bitrate_kbps = 0.0
+                                last_progress = 0.0
+                                time_start = time.time()  # Reset start time for wallclock
+                                speed_samples.clear()  # Clear speed history
+                                _publish(self.request.id, {"type": "log", "message": "⚠️ Encoding restarted, resetting progress..."})
+                            
+                            current_time_s = new_time_s
+                            last_time_s = new_time_s
                         except Exception:
                             pass
                     elif key == "total_size":
@@ -521,23 +535,13 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
                     # Calculate progress using multiple signals
                     if key == "out_time_ms" and duration > 0:
                         try:
-                            # 1. Time-based progress (most reliable throughout)
+                            # Primary: Time-based progress (most stable and predictable)
                             time_progress = min(max(current_time_s / duration, 0.0), 1.0)
                             
-                            # 2. Size-based progress (can overshoot early if bitrate high)
-                            # Be conservative: cap at time_progress to avoid wild jumps
-                            target_bytes = target_size_mb * 1024 * 1024
-                            size_progress = 0.0
-                            if current_size_bytes > 0 and target_bytes > 0:
-                                raw_size_progress = current_size_bytes / target_bytes
-                                # Don't let size-based progress get too far ahead of time-based
-                                size_progress = min(raw_size_progress, time_progress * 1.1)  # Allow 10% ahead max
-                                size_progress = min(max(size_progress, 0.0), 1.0)
-                            
-                            # 3. Wall-clock time estimate using speed
+                            # Secondary: Wall-clock estimate using measured speed
                             elapsed = max(time.time() - start_ts, 0.0)
                             wallclock_progress = 0.0
-                            if speed_ewma and speed_ewma > 0.01 and duration > 0:
+                            if speed_ewma and speed_ewma > 0.01 and duration > 0 and elapsed > 2.0:
                                 try:
                                     est_total_time = duration / speed_ewma
                                     if est_total_time > 0:
@@ -545,24 +549,37 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
                                 except Exception:
                                     pass
                             
-                            # Smart blending prioritizing stability
-                            # Use time as anchor, adjust slightly with other signals
-                            if size_progress > 0.01 and wallclock_progress > 0.01 and elapsed > 3.0:
-                                # All signals available - weighted average favoring time
-                                scaled_progress = (0.6 * time_progress + 0.25 * size_progress + 0.15 * wallclock_progress) * encoding_portion
-                            elif wallclock_progress > 0.01 and elapsed > 3.0:
-                                # Time + wallclock
+                            # Tertiary: Size-based sanity check (detect if way off)
+                            target_bytes = target_size_mb * 1024 * 1024
+                            size_progress = 0.0
+                            if current_size_bytes > 0 and target_bytes > 0:
+                                # Only use size if it's reasonable (within 2x of time progress)
+                                raw_size_progress = current_size_bytes / target_bytes
+                                if raw_size_progress < (time_progress * 2.0):
+                                    size_progress = raw_size_progress
+                            
+                            # Simple weighted blend favoring time stability
+                            if wallclock_progress > 0.01 and elapsed > 3.0:
+                                # Blend time (70%) and wallclock (30%) after speed stabilizes
                                 scaled_progress = (0.7 * time_progress + 0.3 * wallclock_progress) * encoding_portion
                             else:
-                                # Fall back to pure time-based (most stable)
+                                # Pure time-based (most stable)
                                 scaled_progress = time_progress * encoding_portion
                             
-                            # Smoothing: don't allow backwards movement > 2%
-                            if last_progress > 0 and scaled_progress < (last_progress - 0.02):
-                                scaled_progress = last_progress - 0.02  # Gradual correction instead of jump
+                            # Only allow monotonic increase (no backwards movement)
+                            if last_progress > 0:
+                                scaled_progress = max(scaled_progress, last_progress)
                             
                             # Safety clamp
                             scaled_progress = min(max(scaled_progress, 0.0), encoding_portion)
+                            
+                            # Only report progress if stable (skip confused early phase)
+                            # Report only if: progress >= 5% AND no huge jumps (< 50% jump)
+                            should_report = (scaled_progress >= 0.05 and 
+                                           (last_progress == 0 or (scaled_progress - last_progress) < 0.50))
+                            
+                            if should_report:
+                                last_progress = scaled_progress
 
                             # Compute ETA
                             eta_seconds = None
@@ -577,32 +594,32 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
                                 except Exception:
                                     eta_seconds = None
 
-                            # Update if progress changed OR time elapsed
-                            time_since_update = time.time() - last_update_time
-                            progress_delta = abs(scaled_progress - last_progress)
-                            should_update = (
-                                progress_delta >= min_step or 
-                                scaled_progress >= (encoding_portion - 0.001) or
-                                time_since_update >= max_update_interval
-                            )
-                            
-                            if should_update:
-                                last_progress = scaled_progress
-                                last_update_time = time.time()
-                                prog = round(scaled_progress*100, 2)
-                                evt = {"type": "progress", "progress": prog, "phase": "encoding"}
-                                if eta_seconds is not None and math.isfinite(eta_seconds):
-                                    evt["eta_seconds"] = round(float(eta_seconds), 1)
-                                if speed_ewma is not None and math.isfinite(speed_ewma):
-                                    evt["speed_x"] = round(float(speed_ewma), 2)
-                                _publish(self.request.id, evt)
-                                try:
-                                    meta = {"progress": prog, "phase": "encoding"}
-                                    if "eta_seconds" in evt:
-                                        meta["eta_seconds"] = evt["eta_seconds"]
-                                    self.update_state(state="PROGRESS", meta=meta)
-                                except Exception:
-                                    pass
+                            # Update if progress changed OR time elapsed (only if should_report)
+                            if should_report:
+                                time_since_update = time.time() - last_update_time
+                                progress_delta = abs(scaled_progress - last_progress)
+                                should_update = (
+                                    progress_delta >= min_step or 
+                                    scaled_progress >= (encoding_portion - 0.001) or
+                                    time_since_update >= max_update_interval
+                                )
+                                
+                                if should_update:
+                                    last_update_time = time.time()
+                                    prog = round(scaled_progress*100, 2)
+                                    evt = {"type": "progress", "progress": prog, "phase": "encoding"}
+                                    if eta_seconds is not None and math.isfinite(eta_seconds):
+                                        evt["eta_seconds"] = round(float(eta_seconds), 1)
+                                    if speed_ewma is not None and math.isfinite(speed_ewma):
+                                        evt["speed_x"] = round(float(speed_ewma), 2)
+                                    _publish(self.request.id, evt)
+                                    try:
+                                        meta = {"progress": prog, "phase": "encoding"}
+                                        if "eta_seconds" in evt:
+                                            meta["eta_seconds"] = evt["eta_seconds"]
+                                        self.update_state(state="PROGRESS", meta=meta)
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
                     
@@ -737,82 +754,95 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
     # Check if file is too large (>2% over target) and retry with lower bitrate
     size_overage_percent = ((final_size_mb - target_size_mb) / target_size_mb) * 100 if target_size_mb > 0 else 0
     
-    if size_overage_percent > 2.0 and final_size_mb > target_size_mb:
-        # File is too large! Notify user and retry
-        _publish(self.request.id, {"type": "log", "message": f"⚠️ File is {size_overage_percent:.1f}% over target ({final_size_mb:.2f} MB vs {target_size_mb:.2f} MB)"})
-        _publish(self.request.id, {"type": "log", "message": "🔄 Retrying with reduced bitrate to meet size constraint..."})
-        _publish(self.request.id, {"type": "retry", "message": f"File too large ({final_size_mb:.2f} MB), retrying to fit {target_size_mb:.2f} MB target", "overage_percent": round(size_overage_percent, 1)})
-        
-        # Calculate adjusted bitrate (reduce by overage + 5% safety margin)
+    # Track retry attempt (stored in task metadata)
+    retry_attempt = self.request.retries or 0
+    max_retries = 2  # Maximum 2 retry attempts
+    
+    if size_overage_percent > 2.0 and final_size_mb > target_size_mb and retry_attempt < max_retries:
+        # Calculate if retry is feasible
+        # If we need to reduce bitrate below 50%, it's probably impossible
         reduction_factor = max(0.5, 1.0 - (size_overage_percent / 100.0) - 0.05)
-        adjusted_video_kbps = int(video_kbps * reduction_factor)
         
-        _publish(self.request.id, {"type": "log", "message": f"Adjusted video bitrate: {video_kbps} → {adjusted_video_kbps} kbps (reduction: {(1-reduction_factor)*100:.1f}%)"})
-        
-        # Delete the oversized file
-        try:
-            os.remove(output_path)
-            _publish(self.request.id, {"type": "log", "message": "Removed oversized file"})
-        except Exception as e:
-            _publish(self.request.id, {"type": "log", "message": f"Warning: Could not remove oversized file: {e}"})
-        
-        # Reset progress for retry
-        _publish(self.request.id, {"type": "progress", "progress": 1.0, "phase": "encoding"})
-        try:
-            self.update_state(state="PROGRESS", meta={"progress": 1.0, "phase": "encoding"})
-        except Exception:
-            pass
-        
-        # Re-run the encoding with adjusted bitrate by modifying cmd
-        # Find and replace the bitrate values in the original command
-        retry_cmd = []
-        i = 0
-        while i < len(cmd):
-            if cmd[i] == "-b:v":
-                retry_cmd.append(cmd[i])
-                retry_cmd.append(f"{adjusted_video_kbps}k")
-                i += 2
-            elif cmd[i] == "-maxrate":
-                retry_cmd.append(cmd[i])
-                retry_cmd.append(f"{int(adjusted_video_kbps * 1.2)}k")
-                i += 2
-            elif cmd[i] == "-bufsize":
-                retry_cmd.append(cmd[i])
-                retry_cmd.append(f"{int(adjusted_video_kbps * 2)}k")
-                i += 2
-            else:
-                retry_cmd.append(cmd[i])
-                i += 1
-        
-        _publish(self.request.id, {"type": "log", "message": f"Retry FFmpeg command: {' '.join(retry_cmd[:10])}..."})
-        
-        # Run the retry encode
-        last_progress = 0.0
-        stderr_lines = []
-        rc, was_cancelled = run_ffmpeg_and_stream(retry_cmd)
-        
-        if was_cancelled:
-            _publish(self.request.id, {"type": "canceled"})
-            msg = "Job canceled during retry"
-            _publish(self.request.id, {"type": "error", "message": msg})
-            raise RuntimeError(msg)
-        
-        if rc != 0:
-            _publish(self.request.id, {"type": "error", "message": f"Retry encode failed with return code {rc}. Keeping original result."})
-            # Don't fail completely, just note the retry failed
+        if reduction_factor < 0.5:
+            _publish(self.request.id, {"type": "log", "message": f"⚠️ File is {size_overage_percent:.1f}% over target, but further reduction would compromise quality too much."})
+            _publish(self.request.id, {"type": "log", "message": f"📊 Final size: {final_size_mb:.2f} MB (target was {target_size_mb:.2f} MB). Consider adjusting target size or resolution."})
         else:
-            # Update final size after successful retry
+            # File is too large! Notify user and retry
+            _publish(self.request.id, {"type": "log", "message": f"⚠️ File is {size_overage_percent:.1f}% over target ({final_size_mb:.2f} MB vs {target_size_mb:.2f} MB)"})
+            _publish(self.request.id, {"type": "log", "message": f"🔄 Retry attempt {retry_attempt + 1}/{max_retries} with reduced bitrate..."})
+            _publish(self.request.id, {"type": "retry", "message": f"File too large ({final_size_mb:.2f} MB), retrying to fit {target_size_mb:.2f} MB target (attempt {retry_attempt + 1}/{max_retries})", "overage_percent": round(size_overage_percent, 1)})
+            
+            # Calculate adjusted bitrate
+            adjusted_video_kbps = int(video_kbps * reduction_factor)
+            
+            _publish(self.request.id, {"type": "log", "message": f"Adjusted video bitrate: {video_kbps} → {adjusted_video_kbps} kbps (reduction: {(1-reduction_factor)*100:.1f}%)"})
+            
+            # Delete the oversized file
             try:
-                final_size = os.path.getsize(output_path)
-                final_size_mb = round(final_size / (1024*1024), 2)
-                new_overage = ((final_size_mb - target_size_mb) / target_size_mb) * 100 if target_size_mb > 0 else 0
-                if new_overage <= 0:
-                    _publish(self.request.id, {"type": "log", "message": f"✅ Retry successful! Final size: {final_size_mb:.2f} MB (under target)"})
-                else:
-                    _publish(self.request.id, {"type": "log", "message": f"✅ Retry complete! Final size: {final_size_mb:.2f} MB ({new_overage:+.1f}% vs target)"})
+                os.remove(output_path)
+                _publish(self.request.id, {"type": "log", "message": "Removed oversized file"})
+            except Exception as e:
+                _publish(self.request.id, {"type": "log", "message": f"Warning: Could not remove oversized file: {e}"})
+            
+            # Reset progress for retry
+            _publish(self.request.id, {"type": "progress", "progress": 1.0, "phase": "encoding"})
+            try:
+                self.update_state(state="PROGRESS", meta={"progress": 1.0, "phase": "encoding"})
             except Exception:
-                final_size = 0
-                final_size_mb = 0
+                pass
+            
+            # Re-run the encoding with adjusted bitrate by modifying cmd
+            # Find and replace the bitrate values in the original command
+            retry_cmd = []
+            i = 0
+            while i < len(cmd):
+                if cmd[i] == "-b:v":
+                    retry_cmd.append(cmd[i])
+                    retry_cmd.append(f"{adjusted_video_kbps}k")
+                    i += 2
+                elif cmd[i] == "-maxrate":
+                    retry_cmd.append(cmd[i])
+                    retry_cmd.append(f"{int(adjusted_video_kbps * 1.2)}k")
+                    i += 2
+                elif cmd[i] == "-bufsize":
+                    retry_cmd.append(cmd[i])
+                    retry_cmd.append(f"{int(adjusted_video_kbps * 2)}k")
+                    i += 2
+                else:
+                    retry_cmd.append(cmd[i])
+                    i += 1
+            
+            _publish(self.request.id, {"type": "log", "message": f"Retry FFmpeg command: {' '.join(retry_cmd[:10])}..."})
+            
+            # Run the retry encode
+            last_progress = 0.0
+            stderr_lines = []
+            rc, was_cancelled = run_ffmpeg_and_stream(retry_cmd)
+            
+            if was_cancelled:
+                _publish(self.request.id, {"type": "canceled"})
+                msg = "Job canceled during retry"
+                _publish(self.request.id, {"type": "error", "message": msg})
+                raise RuntimeError(msg)
+            
+            if rc != 0:
+                _publish(self.request.id, {"type": "error", "message": f"Retry encode failed with return code {rc}. Using best result."})
+                # Don't fail completely, just note the retry failed
+            else:
+                # Update final size after successful retry
+                try:
+                    final_size = os.path.getsize(output_path)
+                    final_size_mb = round(final_size / (1024*1024), 2)
+                    new_overage = ((final_size_mb - target_size_mb) / target_size_mb) * 100 if target_size_mb > 0 else 0
+                    if new_overage <= 0:
+                        _publish(self.request.id, {"type": "log", "message": f"✅ Retry successful! Final size: {final_size_mb:.2f} MB (under target)"})
+                    else:
+                        _publish(self.request.id, {"type": "log", "message": f"✅ Retry complete! Final size: {final_size_mb:.2f} MB ({new_overage:+.1f}% vs target)"})
+                except Exception:
+                    final_size = 0
+    elif size_overage_percent > 2.0 and retry_attempt >= max_retries:
+        _publish(self.request.id, {"type": "log", "message": f"⚠️ File is {size_overage_percent:.1f}% over target after {max_retries} retries. Keeping best result."})
+        _publish(self.request.id, {"type": "log", "message": f"📊 Final size: {final_size_mb:.2f} MB (target was {target_size_mb:.2f} MB)"})
     
     stats = {
         "input_path": input_path,

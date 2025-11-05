@@ -129,7 +129,15 @@
   let sysCaps: any = null;
   let sysCapsError: string | null = null;
   // Encoder tests summary
-  let encoderTests: Array<{ codec: string; actual_encoder: string; passed: boolean; message?: string }>|null = null;
+  let encoderTests: Array<{ 
+    codec: string; 
+    actual_encoder: string; 
+    passed: boolean; 
+    encode_passed: boolean;
+    encode_message?: string;
+    decode_passed?: boolean;
+    decode_message?: string;
+  }>|null = null;
   let gpuOk: boolean = false;
   // Presets and size buttons
   let presetProfiles: Array<any> = [];
@@ -583,9 +591,11 @@
             
             try { esRef?.close(); esRef = null; } catch {}
             
-            // Play sound if enabled
+            // Play sound if enabled (gentle success chime)
             if (playSoundWhenDone) {
-              const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
+              // Pleasant ascending chime (C-E-G major chord)
+              const audio = new Audio('data:audio/wav;base64,UklGRiQFAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAFAAB/goSGiIqMjo+RkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8=');
+              audio.volume = 0.4;
               audio.play().catch(() => {});
             }
             
@@ -624,16 +634,18 @@
               ...logLines
             ].slice(0, 500);
             
-            // Play distinct "retry" sound (double beep)
+            // Play distinct "retry" sound (warning tone - lower pitched)
             try {
-              // Different tone pattern for retry - two quick beeps
-              const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
+              // Lower warning tone (F note) - distinct from success chime
+              const audio = new Audio('data:audio/wav;base64,UklGRiQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQADAAB/fn18e3p5eHd2dXRzcnFwb25tbGtqaWhnZmVkY2JhYF9eXVxbWllYV1ZVVFNSUVBPTk1MS0pJSEdGRURDQkFAPz49PDo6OTg3NjU0MzIxMC8uLSwrKikoJyYlJCMiISAfHh0cGxoZGBcWFRQTEhEQDw4NDAsKCQgHBgUEAwIBAACAgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8=');
+              audio.volume = 0.3;
               audio.play().catch(() => {});
-              // Play second beep after short delay
+              // Play second tone after brief pause
               setTimeout(() => {
-                const audio2 = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
+                const audio2 = new Audio('data:audio/wav;base64,UklGRiQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQADAAB/fn18e3p5eHd2dXRzcnFwb25tbGtqaWhnZmVkY2JhYF9eXVxbWllYV1ZVVFNSUVBPTk1MS0pJSEdGRURDQkFAPz49PDo6OTg3NjU0MzIxMC8uLSwrKikoJyYlJCMiISAfHh0cGxoZGBcWFRQTEhEQDw4NDAsKCQgHBgUEAwIBAACAgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8=');
+                audio2.volume = 0.3;
                 audio2.play().catch(() => {});
-              }, 200);
+              }, 250);
             } catch {}
             
             // Reset progress for retry
@@ -760,9 +772,11 @@
           progress = 100;
           isCompressing = false;
           try { esRef?.close(); } catch {}
-          // Play sound when done if enabled
+          // Play sound when done if enabled (gentle success chime)
           if (playSoundWhenDone) {
-            const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
+            // Pleasant ascending chime (C-E-G major chord)
+            const audio = new Audio('data:audio/wav;base64,UklGRiQFAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAFAAB/goSGiIqMjo+RkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8=');
+            audio.volume = 0.4;
             audio.play().catch(() => {});
           }
           // Auto-download if enabled
@@ -904,15 +918,35 @@
         {#if encoderTests}
           <details class="mt-3">
             <summary class="cursor-pointer text-sm">Encoder tests</summary>
-            <ul class="mt-2 text-xs space-y-1">
+            <ul class="mt-2 text-xs space-y-2">
               {#each encoderTests as t}
-                <li class="flex items-center justify-between">
-                  <span>{t.codec} <span class="opacity-60">({t.actual_encoder})</span></span>
-                  {#if t.passed}
-                    <span class="text-green-400">PASS</span>
-                  {:else}
-                    <span class="text-red-400" title={t.message || 'Failed'}>FAIL</span>
+                <li class="flex flex-col">
+                  <div class="flex items-center justify-between">
+                    <span class="font-medium">{t.codec} <span class="opacity-60">({t.actual_encoder})</span></span>
+                    {#if t.passed}
+                      <span class="text-green-400">PASS</span>
+                    {:else}
+                      <span class="text-red-400">FAIL</span>
+                    {/if}
+                  </div>
+                  {#if t.decode_passed !== null && t.decode_passed !== undefined}
+                    <div class="ml-3 mt-1 flex items-center justify-between opacity-80">
+                      <span>Decode:</span>
+                      {#if t.decode_passed === true}
+                        <span class="text-green-400 text-xs">✓ {t.decode_message || 'OK'}</span>
+                      {:else}
+                        <span class="text-red-400 text-xs" title={t.decode_message || 'Failed'}>✗ {t.decode_message || 'Failed'}</span>
+                      {/if}
+                    </div>
                   {/if}
+                  <div class="ml-3 mt-1 flex items-center justify-between opacity-80">
+                    <span>Encode:</span>
+                    {#if t.encode_passed === true}
+                      <span class="text-green-400 text-xs">✓ {t.encode_message || 'OK'}</span>
+                    {:else}
+                      <span class="text-red-400 text-xs" title={t.encode_message || 'Failed'}>✗ {t.encode_message || 'Failed'}</span>
+                    {/if}
+                  </div>
                 </li>
               {/each}
             </ul>

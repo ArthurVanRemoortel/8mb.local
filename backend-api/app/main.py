@@ -866,41 +866,57 @@ async def system_encoder_tests():
     any_hw_passed = False
     try:
         for codec in test_codecs:
-            # Prefer JSON detail if present
-            detail_raw = await redis.get(f"encoder_test_json:{codec}")
-            if detail_raw:
+            # Get encode result
+            encode_detail_raw = await redis.get(f"encoder_test_json:{codec}")
+            encode_passed = False
+            encode_msg = "Unknown"
+            actual_encoder = codec
+            
+            if encode_detail_raw:
                 try:
-                    detail = json.loads(detail_raw)
-                    passed = bool(detail.get("passed"))
-                    msg = detail.get("message") or ("OK" if passed else "Failed")
-                    actual_encoder = detail.get("actual_encoder", codec)
-                    results.append({
-                        "codec": codec,
-                        "actual_encoder": actual_encoder,
-                        "passed": passed,
-                        "message": msg,
-                    })
-                    # Only count hardware encoders for GPU availability check
-                    is_hardware = any(actual_encoder.endswith(suffix) for suffix in ["_nvenc", "_qsv", "_amf", "_vaapi"])
-                    if passed and is_hardware:
-                        any_hw_passed = True
-                    continue
+                    encode_detail = json.loads(encode_detail_raw)
+                    encode_passed = bool(encode_detail.get("passed"))
+                    encode_msg = encode_detail.get("message") or ("OK" if encode_passed else "Failed")
+                    actual_encoder = encode_detail.get("actual_encoder", codec)
                 except Exception:
                     pass
-            # Fallback to boolean flag
-            flag = await redis.get(f"encoder_test:{codec}")
-            if flag is not None:
-                passed = (str(flag) == "1")
-                results.append({
-                    "codec": codec,
-                    "actual_encoder": codec,
-                    "passed": passed,
-                    "message": "OK" if passed else "Failed",
-                })
-                # Only count hardware encoders for GPU availability check
-                is_hardware = any(codec.endswith(suffix) for suffix in ["_nvenc", "_qsv", "_amf", "_vaapi"])
-                if passed and is_hardware:
-                    any_hw_passed = True
+            else:
+                # Fallback to boolean flag
+                flag = await redis.get(f"encoder_test:{codec}")
+                if flag is not None:
+                    encode_passed = (str(flag) == "1")
+                    encode_msg = "OK" if encode_passed else "Failed"
+            
+            # Get decode result (if hardware codec)
+            decode_detail_raw = await redis.get(f"encoder_test_decode_json:{codec}")
+            decode_passed = None
+            decode_msg = None
+            
+            if decode_detail_raw:
+                try:
+                    decode_detail = json.loads(decode_detail_raw)
+                    decode_passed = bool(decode_detail.get("passed"))
+                    decode_msg = decode_detail.get("message") or ("OK" if decode_passed else "Failed")
+                except Exception:
+                    pass
+            
+            # Overall passed = encode passed AND (no decode test OR decode passed)
+            overall_passed = encode_passed and (decode_passed is None or decode_passed)
+            
+            results.append({
+                "codec": codec,
+                "actual_encoder": actual_encoder,
+                "passed": overall_passed,
+                "encode_passed": encode_passed,
+                "encode_message": encode_msg,
+                "decode_passed": decode_passed,
+                "decode_message": decode_msg,
+            })
+            
+            # Only count hardware encoders for GPU availability check
+            is_hardware = any(actual_encoder.endswith(suffix) for suffix in ["_nvenc", "_qsv", "_amf", "_vaapi"])
+            if overall_passed and is_hardware:
+                any_hw_passed = True
 
         # Filter: only include encoders relevant to this hardware type plus CPUs
         hw_type = (hw_info.get("type") or "cpu").lower()
