@@ -814,13 +814,16 @@ async def system_encoder_tests():
                     detail = json.loads(detail_raw)
                     passed = bool(detail.get("passed"))
                     msg = detail.get("message") or ("OK" if passed else "Failed")
+                    actual_encoder = detail.get("actual_encoder", codec)
                     results.append({
                         "codec": codec,
-                        "actual_encoder": detail.get("actual_encoder", codec),
+                        "actual_encoder": actual_encoder,
                         "passed": passed,
                         "message": msg,
                     })
-                    if passed and not codec.startswith("lib"):
+                    # Only count hardware encoders for GPU availability check
+                    is_hardware = any(actual_encoder.endswith(suffix) for suffix in ["_nvenc", "_qsv", "_amf", "_vaapi"])
+                    if passed and is_hardware:
                         any_hw_passed = True
                     continue
                 except Exception:
@@ -835,7 +838,9 @@ async def system_encoder_tests():
                     "passed": passed,
                     "message": "OK" if passed else "Failed",
                 })
-                if passed and not codec.startswith("lib"):
+                # Only count hardware encoders for GPU availability check
+                is_hardware = any(codec.endswith(suffix) for suffix in ["_nvenc", "_qsv", "_amf", "_vaapi"])
+                if passed and is_hardware:
                     any_hw_passed = True
 
         # Filter: only include encoders relevant to this hardware type plus CPUs
