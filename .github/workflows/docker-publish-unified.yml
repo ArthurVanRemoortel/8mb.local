@@ -25,10 +25,14 @@ jobs:
       - name: Compute tags
         id: vars
         run: |
+          # Force stable application version tag v131 plus latest for main branch.
+          APP_VERSION=131
+          echo "app_version=${APP_VERSION}" >> $GITHUB_OUTPUT
           SHA_TAG=sha-${GITHUB_SHA::7}
           echo "sha_tag=${SHA_TAG}" >> $GITHUB_OUTPUT
-          if [[ "${GITHUB_REF}" == refs/heads/main || "${GITHUB_REF}" == refs/heads/master || "${GITHUB_REF}" == refs/heads/single-container ]]; then
+          if [[ "${GITHUB_REF}" == refs/heads/main || "${GITHUB_REF}" == refs/heads/master ]]; then
             echo "latest_tag=latest" >> $GITHUB_OUTPUT
+            echo "stable_tag=v${APP_VERSION}" >> $GITHUB_OUTPUT
           fi
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG_NAME=${GITHUB_REF#refs/tags/}
@@ -41,6 +45,7 @@ jobs:
           IMAGE="jms1717/8mblocal"
           TAGS="$IMAGE:${{ steps.vars.outputs.sha_tag }}"
           if [[ -n "${{ steps.vars.outputs.latest_tag }}" ]]; then TAGS="$TAGS\n$IMAGE:${{ steps.vars.outputs.latest_tag }}"; fi
+          if [[ -n "${{ steps.vars.outputs.stable_tag }}" ]]; then TAGS="$TAGS\n$IMAGE:${{ steps.vars.outputs.stable_tag }}"; fi
           if [[ -n "${{ steps.vars.outputs.ref_tag }}" ]]; then TAGS="$TAGS\n$IMAGE:${{ steps.vars.outputs.ref_tag }}"; fi
           {
             echo "tags<<EOF"
@@ -56,3 +61,5 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ steps.taglist.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ steps.vars.outputs.app_version }}
