@@ -46,6 +46,16 @@ def _ffmpeg_has_nvenc(env: dict) -> bool:
 def _wait_for_nv_runtime_ready(timeout_s: float = 30.0, interval_s: float = 2.0) -> bool:
     """Wait until ffmpeg reports nvenc encoders are available, or timeout."""
     env = get_gpu_env()
+    # Fast-exit: if ffmpeg build doesn't even expose NVENC encoders, don't wait
+    try:
+        res = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=5, env=env)
+        if res.returncode == 0:
+            out = (res.stdout or "") + "\n" + (res.stderr or "")
+            if not any(tok in out for tok in ["h264_nvenc", "hevc_nvenc", "av1_nvenc"]):
+                logger.info("NVENC encoders not present in ffmpeg build; skipping NV runtime wait.")
+                return True
+    except Exception:
+        pass
     import time
     start = time.time()
     attempt = 1
@@ -114,8 +124,9 @@ def test_decoder(decoder_name: str, hw_flags: List[str]) -> Tuple[bool, str]:
                 delay = min(delay * 2, 8.0)
                 continue
             break
+        if result is None:
+            return False, "Decode did not execute"
         stderr_lower = (result.stderr or '').lower()
-        stderr_lower = result.stderr.lower()
         
         if "no device found" in stderr_lower or "cannot load" in stderr_lower:
             return False, "Hardware decode failed"
@@ -237,6 +248,18 @@ def run_startup_tests(hw_info: Dict) -> Dict[str, bool]:
     logger.info(f"  NVIDIA_DRIVER_CAPABILITIES: {os.environ.get('NVIDIA_DRIVER_CAPABILITIES', 'NOT SET')}")
     logger.info(f"  LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', 'NOT SET')}")
     logger.info("")
+
+    # Hint for WSL2 users: Intel VAAPI/QSV requires /dev/dri on Linux hosts
+    try:
+        wsl_hint = False
+        with open('/proc/sys/kernel/osrelease', 'r') as f:
+            wsl_hint = 'microsoft' in f.read().lower()
+        if wsl_hint:
+            has_dri = os.path.exists('/dev/dri')
+            if not has_dri:
+                logger.info("ℹ️ Detected WSL2 kernel without /dev/dri: Intel VAAPI/QSV will be unavailable in containers. NVIDIA only.")
+    except Exception:
+        pass
 
     # Ensure NV runtime is ready before running tests (addresses cuInit(0) fail on early start)
     _wait_for_nv_runtime_ready(timeout_s=30.0, interval_s=2.0)

@@ -1,13 +1,13 @@
 """Hardware acceleration detection and codec mapping."""
 import os
 import subprocess
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 # Cache hardware detection result to avoid repeated subprocess calls
 _HW_CACHE: Optional[Dict] = None
 
 
-def detect_hw_accel() -> Dict[str, any]:
+def detect_hw_accel() -> Dict[str, Any]:
     """
     Detect available hardware acceleration.
     Returns dict with: type (nvidia/intel/amd/cpu), encoders available, etc.
@@ -101,7 +101,7 @@ def _check_nvidia() -> bool:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     
-    # Check for CUDA device via ffmpeg
+    # Check for CUDA capability via ffmpeg, but require device nodes to avoid false positives
     try:
         result = subprocess.run(
             ["ffmpeg", "-hide_banner", "-hwaccels"],
@@ -110,7 +110,10 @@ def _check_nvidia() -> bool:
             timeout=2
         )
         if "cuda" in result.stdout.lower():
-            return True
+            # Validate device nodes typical for NVIDIA/WSL GPU
+            import os
+            if os.path.exists("/dev/nvidiactl") or os.path.exists("/dev/nvidia0") or os.path.exists("/dev/dxg"):
+                return True
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     
@@ -118,7 +121,23 @@ def _check_nvidia() -> bool:
 
 
 def _check_intel_qsv() -> bool:
-    """Check if Intel QSV is available."""
+    """Check if Intel QSV is available.
+
+    Notes:
+    - Requires access to /dev/dri on Linux hosts. Under WSL2, /dev/dri is not exposed
+      to Linux containers, so QSV should be considered unavailable to avoid confusing
+      initialization errors (e.g., "Function not implemented").
+    """
+    # Require a DRI render node to be present
+    try:
+        import glob
+        render_nodes = glob.glob("/dev/dri/renderD*")
+        if not render_nodes:
+            # If this is WSL (or any env) without /dev/dri, QSV cannot work
+            return False
+    except Exception:
+        # If we can't check, proceed with ffmpeg probes below
+        pass
     try:
         result = subprocess.run(
             ["ffmpeg", "-hide_banner", "-hwaccels"],
@@ -142,7 +161,7 @@ def _check_intel_qsv() -> bool:
     return False
 
 
-def _check_vaapi() -> Dict[str, any]:
+def _check_vaapi() -> Dict[str, Any]:
     """Check if VAAPI is available (Intel/AMD on Linux)."""
     result = {
         "available": False,
@@ -152,6 +171,12 @@ def _check_vaapi() -> Dict[str, any]:
     }
     
     try:
+        # VAAPI requires a render node; if missing, bail early
+        import glob
+        render_nodes = glob.glob("/dev/dri/renderD*")
+        if not render_nodes:
+            return result
+
         # Check for VAAPI hwaccel
         hwaccels = subprocess.run(
             ["ffmpeg", "-hide_banner", "-hwaccels"],
@@ -180,8 +205,6 @@ def _check_vaapi() -> Dict[str, any]:
         
         # Try to detect vendor (Intel vs AMD) via device info
         # Check for multiple render nodes
-        import glob
-        render_nodes = glob.glob("/dev/dri/renderD*")
         if render_nodes:
             result["device"] = render_nodes[0]
         
