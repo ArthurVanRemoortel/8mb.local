@@ -72,7 +72,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     python3.10 python3-pip supervisor redis-server \
     libopus0 libx264-163 libx265-199 libvpx7 libnuma1 \
     libva2 libva-drm2 libaom3 libdav1d5 \
-    intel-media-va-driver libmfx1 \
+    intel-media-va-driver libmfx1 mesa-va-drivers \
     && apt-get clean && rm -rf /tmp/*
 
 # Copy FFmpeg from build stage (only what we need)
