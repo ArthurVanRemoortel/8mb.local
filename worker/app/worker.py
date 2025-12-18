@@ -163,10 +163,12 @@ def compress_video(self, job_id: str, input_path: str, output_path: str, target_
     bufsize = int(video_kbps * 2)
 
     # Map requested codec to actual encoder and flags
+    actual_encoder, v_flags, init_hw_flags = map_codec_to_hw(video_codec, hw_info)
     
     # Fallback to CPU only if startup tests explicitly marked encoder as unavailable.
     # If cache is empty (tests still running in background), attempt hardware and rely on runtime fallback below.
-    original_encoder = actual_encoder    if actual_encoder not in ("libx264", "libx265", "libaom-av1"):
+    original_encoder = actual_encoder
+    if actual_encoder not in ("libx264", "libx265", "libaom-av1"):
         global ENCODER_TEST_CACHE
         cache_key = f"{actual_encoder}:{':'.join(init_hw_flags)}"
         if cache_key in ENCODER_TEST_CACHE and not ENCODER_TEST_CACHE[cache_key]:
